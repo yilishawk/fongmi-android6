@@ -1,0 +1,32 @@
+# =============================================================================
+# 换行符规范化
+#
+# CI 在 Linux 上执行 ./gradlew 和 bash 脚本，如果这些文件带 CRLF 会直接报
+#     /usr/bin/env: 'sh\r': No such file or directory
+# 导致构建失败。上一代 webhtv-android6 的 CI 就踩过这个坑，故显式钉死。
+# =============================================================================
+* text=auto
+
+*.sh      text eol=lf
+gradlew   text eol=lf
+*.bat     text eol=crlf
+
+# --- 二进制资源，禁止任何换行符转换 ---
+*.so       binary
+*.aar      binary
+*.jar      binary
+*.apk      binary
+*.aab      binary
+*.jks      binary
+*.keystore binary
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.webp     binary
+*.ttf      binary
+*.otf      binary
+*.zip      binary
+*.mp4      binary
+*.woff      binary
+*.woff2     binary

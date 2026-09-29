@@ -1,0 +1,219 @@
+name: Android Release
+
+# =============================================================================
+# fongmi-android6 —— Android 6 (API 23) 分支的在线打包
+#
+# 产出 4 个 release APK（2 手机 + 2 电视，每个各含 arm64-v8a / armeabi-v7a）：
+#   leanback-arm64_v8a-b6.apk      leanback-armeabi_v7a-b6.apk
+#   mobile-arm64_v8a-b6.apk        mobile-armeabi_v7a-b6.apk
+#
+# 包名：com.fongmi.android.tv.b6（靠 -PcoexistSuffix 加后缀，不改包名重打包），
+# 可与上游 webhtv（.tv）和上一代 webhtv-android6（.tv.a6）三者并存。
+#
+# ⚠ 签名是必需的：app/build.gradle 的 release 变体强制走 signingConfigs.release，
+#   而 AbiApkPackaging 还会用 apksigner 二次对齐+签名，signingConfig 为空会直接 NPE。
+#   因此必须在仓库 Secrets 里配好下面三个，否则本工作流会**显式报错退出**：
+#     RELEASE_KEYSTORE_BASE64   keystore 的 base64（单行）
+#     RELEASE_KEY_ALIAS         key alias
+#     RELEASE_STORE_PASSWORD    store 密码（本工程 key 密码与 store 密码相同）
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_id_suffix:
+        description: "共存后缀。留空=b6。只改 applicationId，不改 Java 类名，因此内置的 libplayer.so 仍能解析它的 JNI 回调类。填 b6 或 .b6 均可（会自动补点）"
+        required: false
+        default: b6
+        type: string
+      release_tag:
+        description: "Release tag。留空 = v<versionName>-yyyyMMddHHmm 自动生成"
+        required: false
+        type: string
+      release_notes:
+        description: "Release 说明。用 \\n 表示换行"
+        required: false
+        type: string
+      prerelease:
+        description: "标记为 pre-release"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # 版本必须与工程对齐，否则 Gradle 配置期就会失败：
+      #   build-tools 36.0.0     —— AGP 9.3.1 的 MIN/DEFAULT_BUILD_TOOLS_REVISION
+      #                             （已从 builder-9.3.1.jar 的 ToolsRevisionUtils 常量池核实）
+      #   platforms;android-37.0 —— compileSdk/targetSdk = 37（注意包名带 .0）
+      #   ndk 29.0.14206865      —— app/build.gradle 的 ndkVersion（编 libtvshim.so 垫片）
+      #   cmake 3.22.1           —— app/build.gradle 的 cmake version
+      - name: Install Android packages
+        run: |
+          sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
+
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          VERSION_NAME="$(sed -n 's/^[[:space:]]*versionName[[:space:]]*"\([^"]*\)".*/\1/p' app/build.gradle | head -1)"
+          VERSION_CODE="$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*\([0-9][0-9]*\).*/\1/p' app/build.gradle | head -1)"
+          if [ -z "$VERSION_NAME" ]; then
+            echo "::error title=Cannot read versionName::app/build.gradle 里没解析到 versionName"
+            exit 1
+          fi
+
+          # ---- 共存后缀归一化 ----------------------------------------------
+          # app/build.gradle 把 -PcoexistSuffix 的值**原样**喂给 applicationIdSuffix，
+          # 不做补点。所以这里统一补上前导点：b6 -> .b6，.b6 -> .b6。
+          # 文件名后缀由 AbiApkPackaging.apkSuffix() 去掉前导点推导（.b6 -> -b6）。
+          SUFFIX_RAW="$(printf '%s' '${{ inputs.app_id_suffix }}' | tr -cd 'A-Za-z0-9._-')"
+          if [ -n "$SUFFIX_RAW" ]; then
+            case "$SUFFIX_RAW" in
+              .*) COEXIST_SUFFIX="$SUFFIX_RAW" ;;
+              *)  COEXIST_SUFFIX=".$SUFFIX_RAW" ;;
+            esac
+            # 文件名后缀与包名后缀同源，只是去掉前导点：.b6 -> -b6
+            APK_SUFFIX="-${COEXIST_SUFFIX#.}"
+            APP_ID="com.fongmi.android.tv${COEXIST_SUFFIX}"
+          else
+            COEXIST_SUFFIX=""
+            APK_SUFFIX=""
+            APP_ID="com.fongmi.android.tv"
+          fi
+
+          TAG="${{ inputs.release_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="v${VERSION_NAME}-$(date +%Y%m%d%H%M)"
+          fi
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error title=Release tag exists::$TAG 已存在，换个 tag"
+            exit 1
+          fi
+
+          {
+            echo "version_name=$VERSION_NAME"
+            echo "version_code=$VERSION_CODE"
+            echo "tag=$TAG"
+            echo "title=${TAG#v}"
+            echo "short_sha=$(git rev-parse --short=7 HEAD)"
+            echo "coexist_suffix=$COEXIST_SUFFIX"
+            echo "apk_suffix=$APK_SUFFIX"
+            echo "app_id=$APP_ID"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "包名 = $APP_ID"
+          echo "tag  = $TAG"
+
+      # 必须在任何 Gradle 调用之前完成：app/build.gradle 在**配置期**无条件读取
+      # rootProject/local.properties，文件不存在会直接 FileNotFoundException。
+      - name: Configure release signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+        run: |
+          if [ -z "$RELEASE_KEYSTORE_BASE64" ] || [ -z "$RELEASE_KEY_ALIAS" ] || [ -z "$RELEASE_STORE_PASSWORD" ]; then
+            echo "::error title=Release signing not configured::请在仓库 Settings > Secrets and variables > Actions 里配置 RELEASE_KEYSTORE_BASE64 / RELEASE_KEY_ALIAS / RELEASE_STORE_PASSWORD"
+            exit 1
+          fi
+          mkdir -p app/signing
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > app/signing/release.jks
+          {
+            echo "storeFile=$GITHUB_WORKSPACE/app/signing/release.jks"
+            echo "keyAlias=$RELEASE_KEY_ALIAS"
+            echo "storePassword=$RELEASE_STORE_PASSWORD"
+            echo "keyPassword=$RELEASE_STORE_PASSWORD"
+          } > local.properties
+          echo "Release signing configured"
+
+      - name: Build four release APKs
+        run: |
+          chmod +x ./gradlew
+          rm -rf Release/apk
+          # 一次 assembleRelease 覆盖 2 flavor × 2 ABI = 4 个 APK。
+          # ABI splits 由 buildSrc 的 AbiApkPackaging 无条件开启，universalApk=false。
+          ./gradlew assembleRelease \
+            -PcoexistSuffix='${{ steps.meta.outputs.coexist_suffix }}' \
+            --no-daemon
+
+      # 断言：必须正好 4 个 APK，且 2 flavor × 2 ABI 齐全。少一个就大声失败，
+      # 不允许"构建成功但产物不全"这种假通过。
+      - name: Collect and assert artifacts
+        run: |
+          rm -rf dist
+          mkdir -p dist
+          cp Release/apk/*.apk dist/ 2>/dev/null || true
+          COUNT="$(ls -1 dist/*.apk 2>/dev/null | wc -l)"
+          echo "收集到 $COUNT 个 APK："
+          ls -lh dist/ || true
+          if [ "$COUNT" != "4" ]; then
+            echo "::error title=Unexpected APK count::期望 4 个 APK，实际 $COUNT 个"
+            exit 1
+          fi
+          MISSING=""
+          for DEV in leanback mobile; do
+            for ABIF in arm64_v8a armeabi_v7a; do
+              F="dist/${DEV}-${ABIF}${{ steps.meta.outputs.apk_suffix }}.apk"
+              if [ ! -f "$F" ]; then
+                MISSING="$MISSING $F"
+              fi
+            done
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error title=Missing APK::缺少:$MISSING"
+            exit 1
+          fi
+          echo "4 个 APK 齐全"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES_RAW: ${{ inputs.release_notes }}
+        run: |
+          PRERELEASE_FLAG=""
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          NOTES="$(printf '%s' "$RELEASE_NOTES_RAW" | sed 's/\\n/\n/g')"
+          if [ -z "$NOTES" ]; then
+            NOTES="Android 6 (API 23) 分支在线构建。包名：${{ steps.meta.outputs.app_id }}"
+          fi
+          gh release create "${{ steps.meta.outputs.tag }}" \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.meta.outputs.title }}" \
+            --notes "$NOTES" \
+            $PRERELEASE_FLAG \
+            dist/*.apk
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fongmi-android6-${{ steps.meta.outputs.tag }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30

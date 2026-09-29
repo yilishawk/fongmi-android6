@@ -1,0 +1,103 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "androidx.media3",
+    "module": "media3-exoplayer-smoothstreaming",
+    "version": "1.11.0-alpha01-fongmi",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.1.0"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.media3",
+          "module": "media3-exoplayer",
+          "version": {
+            "requires": "1.11.0-alpha01-fongmi"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "media3-exoplayer-smoothstreaming-1.11.0-alpha01-fongmi.aar",
+          "url": "media3-exoplayer-smoothstreaming-1.11.0-alpha01-fongmi.aar",
+          "size": 53733,
+          "sha512": "5a467ba6dc811f9a7ea66c9fd7275a9f641265dbed4f6fc5b968a9abb88ec7a79bdf3d42e3429c30588510beac1e5b353fb6109ac4240b1bcc8cfc686f066a1b",
+          "sha256": "f33b054a04737310a65e50d14c9c1329558ff6e1922489f26217b4fe984ab169",
+          "sha1": "18a94ef32934d49cab4ce510e427a9dad2a336b3",
+          "md5": "baecf8b5ae9e13005cdfc35fe248fcdb"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.annotation",
+          "module": "annotation",
+          "version": {
+            "requires": "1.6.0"
+          }
+        },
+        {
+          "group": "androidx.media3",
+          "module": "media3-exoplayer",
+          "version": {
+            "requires": "1.11.0-alpha01-fongmi"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "media3-exoplayer-smoothstreaming-1.11.0-alpha01-fongmi.aar",
+          "url": "media3-exoplayer-smoothstreaming-1.11.0-alpha01-fongmi.aar",
+          "size": 53733,
+          "sha512": "5a467ba6dc811f9a7ea66c9fd7275a9f641265dbed4f6fc5b968a9abb88ec7a79bdf3d42e3429c30588510beac1e5b353fb6109ac4240b1bcc8cfc686f066a1b",
+          "sha256": "f33b054a04737310a65e50d14c9c1329558ff6e1922489f26217b4fe984ab169",
+          "sha1": "18a94ef32934d49cab4ce510e427a9dad2a336b3",
+          "md5": "baecf8b5ae9e13005cdfc35fe248fcdb"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "media3-exoplayer-smoothstreaming-1.11.0-alpha01-fongmi-sources.jar",
+          "url": "media3-exoplayer-smoothstreaming-1.11.0-alpha01-fongmi-sources.jar",
+          "size": 31949,
+          "sha512": "683b0e2e4f2170a71221217742b47eab5b824693ee582ec9c33f519d9d4bc0e131ddd670fdaed793a9d6a88ba90456e8fbd8a6c827cd35e606b98478890db98b",
+          "sha256": "00f13621720840474afaf3cd61d9e132579534a936e28e5c7c74cd7ff88183f2",
+          "sha1": "3fee5885421e1fb2ca938fd78269f2bcd5fdd6a2",
+          "md5": "e6b7faa456973d4ab985d8aa9124eade"
+        }
+      ]
+    }
+  ]
+}

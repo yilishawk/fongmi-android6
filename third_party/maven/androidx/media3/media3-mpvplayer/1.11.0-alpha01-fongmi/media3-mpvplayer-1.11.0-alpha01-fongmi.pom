@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!--
+    media3-mpvplayer：本地自建。
+    来源：FongMi/media@release-1.11.0-fongmi 的 :lib-mpvplayer 模块
+    （libraries/mpvplayer/buildout/outputs/aar/lib-mpvplayer-release.aar）。
+    上游 FongMi/TV 只以 app/libs/lib-*.aar 形式分发，未进任何公开 maven。
+
+    依赖按 libraries/mpvplayer/build.gradle.kts 实测得出：
+      api(project(":lib-common"))              -> media3-common
+      implementation(project(":lib-exoplayer"))-> media3-exoplayer
+      implementation(project(":lib-decoder-ffmpeg")) -> 未声明：已用字节码扫描确认
+        该模块的 174 个 class 只引用 common / common.audio / common.util /
+        exoplayer.audio，不引用 decoder.ffmpeg，故不需要该依赖。
+  -->
+  <groupId>androidx.media3</groupId>
+  <artifactId>media3-mpvplayer</artifactId>
+  <version>1.11.0-alpha01-fongmi</version>
+  <packaging>aar</packaging>
+  <name>media3-mpvplayer (local build)</name>
+
+  <dependencies>
+    <dependency>
+      <groupId>androidx.media3</groupId>
+      <artifactId>media3-common</artifactId>
+      <version>1.11.0-alpha01-fongmi</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>androidx.media3</groupId>
+      <artifactId>media3-exoplayer</artifactId>
+      <version>1.11.0-alpha01-fongmi</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>androidx.annotation</groupId>
+      <artifactId>annotation</artifactId>
+      <version>1.10.0</version>
+      <scope>runtime</scope>
+    </dependency>
+  </dependencies>
+</project>

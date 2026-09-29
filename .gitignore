@@ -1,0 +1,40 @@
+# =============================================================================
+# .gitignore — TV-fongmi / fongmi-android6
+#
+# ⚠ 上一版这里写的是 `*.properties`，那会把 gradle.properties 和
+#   gradle/wrapper/gradle-wrapper.properties 一起排除 —— CI 直接跑不起来。
+#   只显式忽略 local.properties（里面有签名密钥），其余 .properties 必须提交。
+# =============================================================================
+
+# --- 构建产物 ---
+build/
+dist/
+Release/
+out-b6/
+.gradle/
+.gradle-user/
+
+# --- 本机配置 / 密钥（绝不能提交）---
+local.properties
+*.jks
+*.keystore
+*.apk
+*.aab
+
+# --- IDE / 编辑器 ---
+.idea/
+.vscode/
+.settings/
+*.iml
+.DS_Store
+
+# --- 本地工具痕迹 ---
+.workbuddy-ai/
+.codex/
+
+# --- 杂项 ---
+*.log
+*.tmp
+__pycache__/
+*.pyc
+node_modules/

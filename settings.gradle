@@ -1,0 +1,32 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+        google()
+    }
+}
+
+plugins {
+    id "org.gradle.toolchains.foojay-resolver-convention" version "1.0.0"
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        // 本地托管的 fongmi media3 fork + nextlib-media3ext（从 webhtv 移植）
+        maven { url = uri("$rootDir/third_party/maven") }
+        mavenCentral()
+        google()
+        flatDir { dirs "$rootDir/app/libs" }
+        maven { url = "https://jitpack.io" }
+    }
+}
+
+include ':app'
+include ':catvod'
+// Android 6 (API 23) 分支：Chaquopy 17 硬要求 minSdk>=24，支持 API 21 的旧版在 Gradle 9 上
+// 无法加载（org.gradle.util.VersionNumber 已被 Gradle 9 移除），故本分支不纳入 :chaquo 模块。
+// 目录仍保留，如需恢复 Python 支持，取消注释并把 minSdk 改回 24 即可。
+// include ':chaquo'
+include ':quickjs'
+rootProject.name = "TV"

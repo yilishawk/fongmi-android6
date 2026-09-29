@@ -1,0 +1,187 @@
+import com.android.build.api.artifact.SingleArtifact
+import com.fongmi.gradle.AbiApkPackaging
+
+plugins {
+    alias libs.plugins.android.application
+}
+
+def localProps = new Properties()
+rootProject.file('local.properties').withInputStream {
+    localProps.load(it)
+}
+
+android {
+    namespace = 'com.fongmi.android.tv'
+
+    compileSdk libs.versions.compileSdk.get().toInteger()
+    // Android 6 (API 23) 分支：只用来编 libtvshim.so（bionic 兼容垫片）。
+    // 见 app/src/main/cpp/CMakeLists.txt 与 utils/NativeCompat.java。
+    ndkVersion "29.0.14206865"
+
+    defaultConfig {
+        applicationId "com.fongmi.android.tv"
+        // 共存：默认不加后缀，保持与原包同 applicationId；打包时传 -PcoexistSuffix=.b6
+        // 即可让本构建以 com.fongmi.android.tv.b6 安装，与上游 webhtv（.tv）以及
+        // 上一代 webhtv-android6 的包（.tv.a6）三者并存。
+        // ⚠ 后缀是"显式传参才加"的，CI 不传 = 出的是 .tv，会与上游直接冲突。
+        if (project.hasProperty('coexistSuffix') && project.getProperty('coexistSuffix').toString()) {
+            applicationIdSuffix project.getProperty('coexistSuffix').toString()
+        }
+        minSdk libs.versions.minSdk.get().toInteger()
+        targetSdk libs.versions.targetSdk.get().toInteger()
+        versionCode 563
+        versionName "5.6.3"
+        externalNativeBuild {
+            cmake {
+                // 垫片自身只引用 API 23 就有的原语（fcntl / lseek64 / readv / writev /
+                // prlimit64 / ioctl / fseeko）。平台号只影响编译链接期，不影响运行时；
+                // 产物加载前会用 audit_sym_versions.py 对着 API-23 stub 复核一遍。
+                arguments "-DANDROID_PLATFORM=android-26"
+            }
+        }
+        javaCompileOptions {
+            annotationProcessorOptions {
+                arguments = ["room.schemaLocation": "$projectDir/schemas".toString(), "eventBusIndex": "com.fongmi.android.tv.event.EventIndex"]
+            }
+        }
+    }
+
+    flavorDimensions = ["device"]
+
+    productFlavors {
+        leanback {
+            dimension "device"
+        }
+        mobile {
+            dimension "device"
+        }
+    }
+
+    buildFeatures {
+        buildConfig = true
+        viewBinding = true
+    }
+
+    signingConfigs {
+        release {
+            storeFile file(localProps['storeFile'])
+            keyAlias localProps['keyAlias']
+            keyPassword localProps['storePassword']
+            storePassword localProps['storePassword']
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = true
+            shrinkResources = true
+            signingConfig = signingConfigs.release
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro', 'proguard-rules-media.pro'
+        }
+    }
+
+    configurations.configureEach {
+        exclude group: 'stax', module: 'stax-api'
+        exclude group: 'xpp3', module: 'xpp3'
+        exclude group: 'com.android.support'
+        resolutionStrategy {
+            force libs.okhttp
+        }
+    }
+
+    lint {
+        disable 'UnsafeOptInUsageError'
+        disable 'ExpiredTargetSdkVersion'
+    }
+
+    compileOptions {
+        coreLibraryDesugaringEnabled = true
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file("src/main/cpp/CMakeLists.txt")
+            version "3.22.1"
+        }
+    }
+}
+
+AbiApkPackaging.configure(project, SingleArtifact.APK.INSTANCE)
+
+// 2026-09-28：排掉 io.antmedia:rtmp-client（RTMP 重复类）。
+//
+// 起因：我们自建并发布到 third_party/maven 的 media3-datasource-rtmp，其 .pom / .module
+// 元数据里带着
+//     io.antmedia:rtmp-client:3.2.0   (runtime)
+// 而 FongMi 官方私有那份没有这条 —— 官方是用 app 侧显式声明的
+//     com.github.mcxinyu:LibRtmp-Client-for-Android:v3.2.0.m2
+// 来提供这些类的。我们重建 AAR 时把传递依赖带了回来，于是同一个 classpath 上出现两套
+// 完全同名的类：
+//     io.antmedia.rtmp_client.{RtmpClient, RtmpClient$RtmpIOException, RTMPMuxer, BuildConfig}
+// 导致 :app:checkLeanbackDebugDuplicateClasses 失败。
+//
+// 证据（两个 AAR 都已实际解包核对）：
+//   - 类集合完全相同，各 4 个；
+//   - javap 逐成员比对 RtmpClient：无差异；
+//   - AAR 条目结构相同，jni/ 下都是 arm64-v8a / armeabi-v7a / x86 / x86_64 四个
+//     librtmp-jni.so；arm64-v8a 与 armeabi-v7a 大小一致但 md5 不同，
+//     x86 / x86_64 连大小都不同 —— 同一源码用不同工具链重编，功能等价。
+//
+// 结论：两套可互换，保留**工程显式声明的那个**（mcxinyu fork），排掉传递来的官方那份。
+// 之所以放在配置层而不是给依赖挂 exclude：media3 是以 `implementation libs.bundles.media3`
+// 这个 bundle 引入的，bundle 不支持对单个成员挂 exclude。
+// catvod / quickjs 不依赖 media3，故只需在这里排。
+configurations.all {
+    exclude group: "io.antmedia", module: "rtmp-client"
+}
+
+dependencies {
+    implementation fileTree(dir: "libs", include: ["*.aar"])
+    implementation project(':catvod')
+    // Android 6 (API 23) 分支：见 settings.gradle 说明，本分支不引入 :chaquo（Python 引擎）。
+    // implementation project(':chaquo')
+    implementation project(':quickjs')
+    implementation libs.appcompat
+    implementation libs.lifecycle.service
+    // 从 webhtv 移植：fongmi media3 fork（third_party/maven）+ mpvplayer 扩展
+    implementation libs.bundles.media3
+    // 2026-09-27 停用：nextlib-media3ext 是从 webhtv 一起带过来的，但 TV-fongmi 的源码
+    // 对它零引用（全工程扫描：只有 build.gradle / libs.versions.toml / settings.gradle 提到名字，
+    // app 与 catvod 的 .java 里一处都没有）。而它自带 jni/<abi>/{libavcodec,libavutil,
+    // libswresample,libswscale}.so，会和我们补进 app/src/main/jniLibs 的 FFmpeg 库**同名冲突**
+    // ——那批库是 libmpv.so 的 DT_NEEDED 依赖，必须是我们这一版（nextlib 的是精简版，
+    // 实测缺 libavfilter/libavformat/libavdevice，libmpv.so 会有 136 个符号解析不了）。
+    // 官方 5.6.6 APK 里也确实没有 libmedia3ext.so。要恢复把下面一行取消注释即可。
+    // implementation libs.nextlib.media3ext
+    implementation libs.palette
+    implementation libs.recyclerview
+    implementation libs.room.runtime
+    implementation libs.splashscreen
+    implementation libs.swiperefreshlayout
+    implementation libs.viewpager2
+    implementation libs.android.gif.drawable
+    implementation libs.bundles.glide
+    implementation libs.bundles.jupnp
+    implementation libs.customactivityoncrash
+    implementation libs.eventbus
+    implementation libs.flexbox
+    implementation libs.rtmp.client
+    implementation libs.lottie
+    implementation libs.material
+    implementation libs.materialdesigncolors
+    implementation libs.nanohttpd
+    implementation libs.newpipeextractor
+    implementation libs.permissionx
+    implementation libs.simple.xml
+    implementation libs.textdrawable
+    leanbackImplementation libs.leanback
+    leanbackImplementation libs.androidautosize
+    mobileImplementation libs.biometric
+    mobileImplementation libs.zxing.android.embedded
+    annotationProcessor libs.room.compiler
+    annotationProcessor libs.eventbus.annotation.processor
+    annotationProcessor libs.glide.compiler
+    coreLibraryDesugaring libs.desugar
+}
