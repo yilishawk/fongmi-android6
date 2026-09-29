@@ -73,6 +73,7 @@ abstract class FinalizeApkWorkAction implements WorkAction<FinalizeApkParameters
     }
 
     private static void filterChaquopyAssets(File inputApk, File filtered, String abi, String removeAbi) {
+        def sawChaquopy = false
         def removedRequirements = false
         def removedStdlib = false
         def removedNative = 0
@@ -86,6 +87,15 @@ abstract class FinalizeApkWorkAction implements WorkAction<FinalizeApkParameters
                 def entries = inputZip.entries
                 while (entries.hasMoreElements()) {
                     def entry = entries.nextElement()
+                    // Android 6 (API 23) 分支把 Chaquopy 关掉了（settings.gradle 里
+                    // include ':chaquo' 被注释、app/build.gradle 的 :chaquo 依赖也被注释），
+                    // 所以 APK 里**根本没有** assets/chaquopy/（实测条目数 = 0）。
+                    // 因此先记录"这个 APK 到底有没有 Chaquopy 资产"，下面的完整性断言
+                    // 只在真的有的时候才生效 —— 否则它会无条件抛异常，
+                    // 让本分支的 release 包永远打不出来。
+                    // （2026-09-29 CI run 36532625030：两个 ABI 都报 Incomplete Chaquopy ABI assets。）
+                    // 注意这行必须在下面所有 continue 之前。
+                    if (entry.name.startsWith("assets/chaquopy/")) sawChaquopy = true
                     if (entry.name == "assets/chaquopy/requirements-${removeAbi}.imy") {
                         removedRequirements = true
                         continue
@@ -114,7 +124,9 @@ abstract class FinalizeApkWorkAction implements WorkAction<FinalizeApkParameters
         } finally {
             inputZip.close()
         }
-        if (!removedRequirements || !removedStdlib || removedNative == 0 || !keptRequirements || !keptStdlib || keptNative == 0) {
+        // 只有"APK 里确实带 Chaquopy 资产"时才要求它齐全。
+        // 不带 ⇒ 本分支的正常形态，直接放行（后续照常 zipalign + 签名）。
+        if (sawChaquopy && (!removedRequirements || !removedStdlib || removedNative == 0 || !keptRequirements || !keptStdlib || keptNative == 0)) {
             throw new GradleException("Incomplete Chaquopy ABI assets for ${abi} in ${inputApk.name}")
         }
     }
