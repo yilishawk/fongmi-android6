@@ -64,18 +64,72 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # gradle/gradle-daemon-jvm.properties 是给**本地开发者**用的 JVM 选择文件，
+      # 内容是 toolchainVendor=JETBRAINS + toolchainVersion=21 + 一组 foojay 下载地址。
+      # 在 CI 里它是纯负担：我们刚刚用 setup-java 明确装好了 Temurin 21，
+      # 留着它会让 Gradle 认为"不满足条件"，转头去 foojay 再下一个 JetBrains JDK
+      # （约 200MB，且依赖 foojay 的直链长期有效）。
+      # 删掉后 Gradle 直接用启动它的那个 JVM，即 setup-java 装的 Temurin 21，行为确定。
+      # 注意：只删 CI 工作区里的副本，仓库里的文件不动，本地开发不受影响。
+      - name: Drop local-only daemon JVM criteria
+        run: rm -f gradle/gradle-daemon-jvm.properties
 
-      # 版本必须与工程对齐，否则 Gradle 配置期就会失败：
+      # 不用 android-actions/setup-android@v3：它在内部执行 `sdkmanager tools`，
+      # 而 `tools` 这个包已从 SDK 仓库移除 ⇒ 报
+      #     Warning: Failed to find package 'tools'
+      #     Error: The process '.../sdkmanager' failed with exit code 1
+      # （2026-09-29 run 36532372206 实测，15 秒即失败。）
+      # ubuntu-latest runner 本身就预装了 Android SDK，直接用它自带的 sdkmanager 即可，
+      # 少一个第三方 action 就少一个故障点。
+      #
+      # 要装的包必须与工程对齐，否则 Gradle 配置期就会失败：
       #   build-tools 36.0.0     —— AGP 9.3.1 的 MIN/DEFAULT_BUILD_TOOLS_REVISION
       #                             （已从 builder-9.3.1.jar 的 ToolsRevisionUtils 常量池核实）
       #   platforms;android-37.0 —— compileSdk/targetSdk = 37（注意包名带 .0）
       #   ndk 29.0.14206865      —— app/build.gradle 的 ndkVersion（编 libtvshim.so 垫片）
       #   cmake 3.22.1           —— app/build.gradle 的 cmake version
+      - name: Set up Android SDK
+        run: |
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
+            echo "::error title=Android SDK not found::runner 上既没有 ANDROID_HOME 也没有 ANDROID_SDK_ROOT，或目录不存在"
+            exit 1
+          fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "SDK 目录 = $SDK"
+          ls -1 "$SDK" || true
+
+          SDKMGR="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMGR" ]; then
+            # runner 上 cmdline-tools 的目录名是版本号（实测 16.0）而不是 latest，
+            # 所以不能写死 cmdline-tools/latest/bin，用 find 兜底。
+            SDKMGR="$(find "$SDK/cmdline-tools" -name sdkmanager -type f 2>/dev/null | sort | tail -1)"
+          fi
+          if [ -z "$SDKMGR" ]; then
+            echo "::error title=sdkmanager not found::在 $SDK/cmdline-tools 下找不到 sdkmanager"
+            exit 1
+          fi
+          echo "sdkmanager = $SDKMGR"
+          echo "SDKMGR=$SDKMGR" >> "$GITHUB_ENV"
+          "$SDKMGR" --version
+
       - name: Install Android packages
         run: |
-          sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
+          # 自动接受 SDK 许可，否则 sdkmanager 会卡在交互式 "Accept? (y/N)"
+          yes | "$SDKMGR" "platform-tools" "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
+          echo "--- 安装结果 ---"
+          ls -1 "$ANDROID_HOME/build-tools" || true
+          ls -1 "$ANDROID_HOME/platforms" || true
+          ls -1 "$ANDROID_HOME/ndk" || true
+          # 断言关键组件真的落地了，避免后面报出难懂的错
+          for D in "build-tools/36.0.0" "platforms/android-37.0" "ndk/29.0.14206865"; do
+            if [ ! -d "$ANDROID_HOME/$D" ]; then
+              echo "::error title=SDK component missing::缺 $ANDROID_HOME/$D"
+              exit 1
+            fi
+          done
+          echo "关键 SDK 组件齐全"
 
       - name: Resolve release metadata
         id: meta
@@ -155,9 +209,10 @@ jobs:
         run: |
           chmod +x ./gradlew
           rm -rf Release/apk
-          # 一次 assembleRelease 覆盖 2 flavor × 2 ABI = 4 个 APK。
+          # :app:assembleRelease 一次覆盖 2 flavor × 2 ABI = 4 个 APK。
+          # （用 :app: 限定，避免根级 assembleRelease 顺带把 catvod/quickjs 的 release 变体也编一遍。）
           # ABI splits 由 buildSrc 的 AbiApkPackaging 无条件开启，universalApk=false。
-          ./gradlew assembleRelease \
+          ./gradlew :app:assembleRelease \
             -PcoexistSuffix='${{ steps.meta.outputs.coexist_suffix }}' \
             --no-daemon
 
