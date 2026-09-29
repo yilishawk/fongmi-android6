@@ -245,6 +245,43 @@ jobs:
           fi
           echo "4 个 APK 齐全"
 
+      # 断言产物**本身**是对的。这两条都不是预防性加码，而是已经真实发生过的失败模式：
+      #   1) 包名必须是 .tv.b6 —— CI 忘了传 -PcoexistSuffix 就会出 .tv，与上游 webhtv 冲突
+      #      （这是本分支共存方案的核心，见 app/build.gradle 的注释）
+      #   2) 必须带 v1(JAR) 签名 —— v2 是 Android 7.0 才引入的，而本分支目标机是 Android 6，
+      #      "Older platforms ignore v2 signatures and only verify v1 signatures"（AOSP 官方文档）
+      #      2026-09-29 实测：FinalizeApksTask 原本写死 v1=false ⇒ apksigner 报
+      #      DOES NOT VERIFY / Missing META-INF/MANIFEST.MF ⇒ 包装不上 Android 6
+      #
+      # 这里刻意不用 `grep -q` 收管道：本项目的校验脚本曾被 grep -q 的 SIGPIPE 坑出过"假通过"。
+      # 按项目约定，先把输出取到变量，再用 bash case 做纯字符串匹配。
+      - name: Verify package name and v1 signature
+        run: |
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          FAIL=0
+          for A in dist/*.apk; do
+            PKG="$("$BT/aapt2" dump badging "$A" 2>/dev/null | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
+            echo "--- $(basename "$A") ---"
+            echo "    package = $PKG"
+            if [ "$PKG" != "${{ steps.meta.outputs.app_id }}" ]; then
+              echo "::error title=Wrong package name::$A 的包名是 '$PKG'，期望 '${{ steps.meta.outputs.app_id }}'"
+              FAIL=1
+            fi
+            V="$("$BT/apksigner" verify --verbose "$A" 2>&1)"
+            case "$V" in
+              *"Verified using v1 scheme (JAR signing): true"*)
+                echo "    v1 (JAR) 签名 = true" ;;
+              *)
+                echo "::error title=Missing v1 signature::$A 没有 v1(JAR) 签名，装不上 Android 6"
+                echo "$V" | head -20
+                FAIL=1 ;;
+            esac
+          done
+          if [ "$FAIL" != "0" ]; then
+            exit 1
+          fi
+          echo "✅ 4 个 APK 的包名与 v1 签名都正确"
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

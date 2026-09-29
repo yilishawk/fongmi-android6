@@ -141,11 +141,29 @@ abstract class FinalizeApkWorkAction implements WorkAction<FinalizeApkParameters
         execOperations.exec {
             environment 'APK_KS_PASS', parameters.storePassword.get()
             environment 'APK_KEY_PASS', parameters.keyPassword.get()
+            // ⚠ v1 (JAR signing) 必须开启，否则包**装不上 Android 6**。
+            //
+            // 依据（AOSP 官方文档 "APK signature scheme v2"）：
+            //   "APK signature scheme v2 was introduced in Android 7.0 (Nougat).
+            //    To make a APK installable on Android 6.0 (Marshmallow) and older devices,
+            //    the APK should be signed using JAR signing before being signed with the v2 scheme."
+            //   "Older platforms ignore v2 signatures and only verify v1 signatures."
+            //
+            // 这里原本是 v1=false / v2=true —— 那是 TV-fongmi 上游的配置（上游 minSdk = 24，
+            // v2-only 没问题）。**本分支把 minSdk 降到 23**，所以必须补上 v1。
+            //
+            // 实测（2026-09-29）：
+            //   CI 的 release 包 v1=false  ⇒ apksigner 报 DOES NOT VERIFY / Missing META-INF/MANIFEST.MF
+            //   本机 debug 包（AGP 签）    ⇒ v1=true + v2=true ⇒ Verifies
+            //   上一代 webhtv-android6 发布包 ⇒ v1=true + v2=true ⇒ Verifies
+            //
+            // 注意顺序：v1 必须在 zipalign **之后**做（见 execute() 里的 align → sign），
+            // 否则 zipalign 会破坏 v1 签名。
             commandLine parameters.javaExecutable.get().asFile.absolutePath,
                     '-jar', parameters.apksignerJar.get().asFile.absolutePath,
                     'sign', '--ks', parameters.signingStoreFile.get().asFile.absolutePath,
                     '--ks-key-alias', parameters.keyAlias.get(), '--ks-pass', 'env:APK_KS_PASS',
-                    '--key-pass', 'env:APK_KEY_PASS', '--v1-signing-enabled', 'false',
+                    '--key-pass', 'env:APK_KEY_PASS', '--v1-signing-enabled', 'true',
                     '--v2-signing-enabled', 'true', '--v3-signing-enabled', 'false',
                     '--v4-signing-enabled', 'false', '--out', outputApk.absolutePath, inputApk.absolutePath
         }
