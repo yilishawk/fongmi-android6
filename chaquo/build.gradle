@@ -1,6 +1,25 @@
+// Android 6 (API 23) 分支的 Python 模块。
+//
+// ⚠ 这里**刻意不再使用** `com.chaquo.python` 插件（上游用 `id 'com.chaquo.python'`）：
+//   - Chaquopy 17 硬要求 minSdk >= 24；
+//   - 唯一支持 API 21 的 15.0.1 在 Gradle 9 上**无法加载**：
+//     ① 移除了 `org.gradle.util.VersionNumber`（可 shim，但补不了 ②）；
+//     ② 禁止向 buildscript 配置容器加配置（`Cannot mutate configuration container
+//        for buildscript ... using create(String)`）—— 架构级限制，shim 无解。
+//
+// 改为：Python 运行时资产由影子工程预先构建好（见 settings.gradle 说明），以**普通文件**形式
+// 放在本模块里：
+//   src/main/assets/chaquopy/**        Chaquopy 资产（bootstrap/stdlib/requirements/app.imy …）
+//   src/main/jniLibs/<abi>/*.so        原生库（libpython3.10.so 等 5 个）
+//   libs/chaquopy_java-15.0.1.jar      Chaquopy 的 Java 运行时（com.chaquo.python.**）
+// 于是本模块只是一个普通 Android library，主工程不需要任何 Chaquopy 插件。
+//
+// ⚠ 改 assets/chaquopy/** 里的任何字节都会让 build.json 里的哈希校验失败，不要动它们。
+//
+// 注：`src/main/python/`（app.py / runner.py / trigger.py / base/spider.py）已由影子工程
+// 编译进 assets/chaquopy/app.imy，本模块的构建不再读取该目录，保留仅为源码参照。
 plugins {
     id 'com.android.library'
-    id 'com.chaquo.python'
 }
 
 android {
@@ -12,18 +31,8 @@ android {
         minSdk libs.versions.minSdk.get().toInteger()
         targetSdk libs.versions.targetSdk.get().toInteger()
         ndk { abiFilters "arm64-v8a", "armeabi-v7a" }
-        python {
-            version = "3.10"
-            pip {
-                install("-r", "requirements.txt")
-            }
-        }
-    }
-
-    sourceSets {
-        main {
-            python.srcDirs = ["src/main/python"]
-        }
+        // Chaquopy 的消费端 R8 规则（Cython 反射调用 Java 类，R8 看不见引用）
+        consumerProguardFiles 'consumer-rules.pro'
     }
 
     compileOptions {
@@ -34,6 +43,11 @@ android {
 }
 
 dependencies {
+    // 预置的 Chaquopy Java 运行时，取自 com.chaquo.python.runtime:chaquopy_java:15.0.1。
+    // 注意：用 files(...) 会丢掉该模块 pom 里的传递依赖（org.jetbrains:annotations-java5，
+    // runtime scope）—— 但 org.jetbrains:annotations 已由主工程其他依赖传递引入，
+    // Platform.java 里的 `import org.jetbrains.annotations.NotNull` 能正常解析。
+    implementation files('libs/chaquopy_java-15.0.1.jar')
     implementation project(':catvod')
     coreLibraryDesugaring libs.desugar
 }

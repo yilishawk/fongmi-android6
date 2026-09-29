@@ -1,44 +1,69 @@
 package com.fongmi.android.tv.api.loader;
 
-import android.util.Log;
+import android.text.TextUtils;
 
+import com.fongmi.android.tv.App;
+import com.fongmi.chaquo.Loader;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderNull;
 
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Android 6 (API 23) 分支的 Python 加载器桩。
+ * Python 加载器 —— 与上游 webhtv 一致（本分支原先的 SpiderNull 桩已移除）。
  *
- * 上游用 Chaquopy 执行 .py 爬虫源，但存在不可兼得的硬约束：
- *   - Chaquopy 17 硬要求 minSdk >= 24；
- *   - 支持 API 21 的 Chaquopy 15 在 Gradle 9 上无法加载
- *     （org.gradle.util.VersionNumber 已被 Gradle 9 移除，实测 NoClassDefFoundError）。
- * 本分支选择 API 23，故移除 Python 引擎。
- *
- * 这里保留与上游完全一致的公开方法签名，使 BaseLoader 无需改动；
- * 所有 .py 源一律返回 SpiderNull（与上游"加载失败"的既有行为一致）。
- * .js（quickjs）、jar（DexClassLoader）、csp 源不受影响。
+ * 上游用 Chaquopy 执行 .py 爬虫源。本分支跑在 API 23 上，而 Chaquopy 17 硬要求 minSdk >= 24，
+ * 唯一支持 API 21 的 15.0.1 又无法在 Gradle 9 上加载，所以**不再用 Chaquopy 插件**，
+ * 改成把运行时资产预先构建好放进 :chaquo 模块（详见 settings.gradle / chaquo/build.gradle）。
+ * 资产是 Chaquopy 15.0.1 的，但 Android 侧的调用面与上游完全相同，故本类与上游逐行一致。
  */
 public class PyLoader {
 
-    private static final String TAG = "PyLoader";
+    private final ConcurrentHashMap<String, Spider> spiders;
+    private final Loader loader;
+    private volatile String recent;
 
     public PyLoader() {
+        spiders = new ConcurrentHashMap<>();
+        loader = new Loader();
     }
 
     public void clear() {
+        spiders.values().forEach(Spider::destroy);
+        spiders.clear();
+        recent = null;
     }
 
     public void setRecent(String recent) {
+        this.recent = recent;
     }
 
     public Spider getSpider(String key, String api, String ext) {
-        Log.w(TAG, "Python source is not supported in this API 23 build: " + api);
-        return new SpiderNull();
+        return spiders.computeIfAbsent(key, k -> {
+            try {
+                Spider spider = loader.spider(api);
+                spider.siteKey = key;
+                spider.init(App.get(), normalizeExt(ext));
+                return spider;
+            } catch (Throwable e) {
+                e.printStackTrace();
+                return new SpiderNull();
+            }
+        });
     }
 
-    public Object[] proxy(Map<String, String> params) {
-        return null;
+    private String normalizeExt(String ext) {
+        String value = TextUtils.isEmpty(ext) ? "" : ext.trim();
+        // Many live Python spiders treat ext as an option object and call .get().
+        // TV-style configs commonly express an empty extension as [], which would
+        // otherwise deserialize to a list and crash those spiders during init.
+        return "[]".equals(value) ? "{}" : ext;
+    }
+
+    public Object[] proxy(Map<String, String> params) throws Exception {
+        if (recent == null) return null;
+        Spider spider = spiders.get(recent);
+        return spider != null ? spider.proxy(params) : null;
     }
 }

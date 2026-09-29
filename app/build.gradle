@@ -140,8 +140,8 @@ configurations.all {
 dependencies {
     implementation fileTree(dir: "libs", include: ["*.aar"])
     implementation project(':catvod')
-    // Android 6 (API 23) 分支：见 settings.gradle 说明，本分支不引入 :chaquo（Python 引擎）。
-    // implementation project(':chaquo')
+    // Python 引擎：预置运行时资产，不需要 Chaquopy 插件（见 settings.gradle / chaquo/build.gradle）
+    implementation project(':chaquo')
     implementation project(':quickjs')
     implementation libs.appcompat
     implementation libs.lifecycle.service

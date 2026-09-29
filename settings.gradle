@@ -24,9 +24,18 @@ dependencyResolutionManagement {
 
 include ':app'
 include ':catvod'
-// Android 6 (API 23) 分支：Chaquopy 17 硬要求 minSdk>=24，支持 API 21 的旧版在 Gradle 9 上
-// 无法加载（org.gradle.util.VersionNumber 已被 Gradle 9 移除），故本分支不纳入 :chaquo 模块。
-// 目录仍保留，如需恢复 Python 支持，取消注释并把 minSdk 改回 24 即可。
-// include ':chaquo'
+// Android 6 (API 23) 分支的 Python 支持：**不再使用 com.chaquo.python 插件**。
+//   Chaquopy 17 硬要求 minSdk>=24；唯一支持 API 21 的 15.0.1 在 Gradle 9 上无法加载 ——
+//   ① org.gradle.util.VersionNumber 已被 Gradle 9 移除（可 shim）；
+//   ② Gradle 9 禁止向 buildscript 配置容器加配置（Cannot mutate configuration container
+//      for buildscript ... using create(String)）—— 架构级限制，shim 无解。
+// 改为：由影子工程（.gradle-user/chaquopy-shadow/，Gradle 8.7 + AGP 8.5.2 + Chaquopy 15.0.1
+// + Python 3.10 + minSdk 24）预先构建好运行时资产，再以普通文件放进 :chaquo 模块：
+//   chaquo/src/main/assets/chaquopy/**   资产（stdlib/requirements/bootstrap/app .imy）
+//   chaquo/src/main/jniLibs/<abi>/*.so   原生库（libpython3.10.so 等）
+//   chaquo/libs/chaquopy_java-15.0.1.jar Java 运行时
+// 于是 :chaquo 只是普通 Android library，主工程不需要任何 Chaquopy 插件。
+// 重新生成资产的步骤见 .gradle-user/chaquopy-routeB/（shadow_build.sh + audit_chaquopy.sh）。
+include ':chaquo'
 include ':quickjs'
 rootProject.name = "TV"
