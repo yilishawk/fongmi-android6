@@ -221,29 +221,42 @@ jobs:
           #
           # --stacktrace：run 36674838783 只报
           #   "A failure occurred while executing ...IncrementalSplitterRunnable"，
-          #   **连 Caused by 都没有** ⇒ 根因被 AGP 吞了，只能靠完整堆栈定位。
+          #   **连 Caused by 都没有** ⇒ 根因被 AGP 吞了。
           #   那条 transform 就是 buildSrc 的 FinalizeApksTask（zipalign + apksigner）。
-          # --info：execOperations.exec 的输出默认是 INFO 级，不开就看不到
-          #   zipalign / apksigner 自己的报错。
-          # 输出重定向到文件再按需裁剪：--info 对 8 分钟的构建会产生大量输出，
-          #   直接打给 CI 有撑爆单 job 日志上限的风险。
+          #   注意：光靠 --stacktrace 还不够 —— 真正把现场留下来的是 FinalizeApksTask
+          #   里新加的 dumpFailure()（重抛前把 abi / 文件大小 / 磁盘 / 堆 / 完整 cause 链
+          #   打到 stderr）。
+          #
+          # 用 tee 而不是 `> file 2>&1`：重定向会让整个构建在 CI 日志里一行不输出，
+          # 反而比改之前更难排查。tee 既保留 Task 级进度，又把完整日志留在
+          # /tmp/gradle-build.log 供失败时上传。
+          #
+          # 刻意不开 --info：它对 8 分钟的构建会产生大量输出，有撑爆单 job 日志上限的
+          # 风险。zipalign / apksigner 自己的报错已经由 FinalizeApksTask 直接转发到
+          # 进程 stderr（见 align() / sign() 里的 errorOutput），不需要 --info。
+          #
+          # pipefail：GitHub Actions 的 bash 默认带 -eo pipefail，tee 不会吞掉 gradlew
+          # 的退出码，失败时这一步照常变红。
+          set -o pipefail
           ./gradlew :app:assembleRelease \
             -PcoexistSuffix='${{ steps.meta.outputs.coexist_suffix }}' \
             --no-daemon \
             --stacktrace \
-            --info \
-            > /tmp/gradle-build.log 2>&1 || {
-              echo "::group::Gradle 失败：关键行"
-              grep -nE "Caused by|FAILURE:|What went wrong|OutOfMemory|ExecException|Incomplete Chaquopy|Killed|error:|Exception" /tmp/gradle-build.log | tail -80 || true
-              echo "::endgroup::"
-              echo "::group::Gradle 失败：末尾 150 行"
-              tail -150 /tmp/gradle-build.log || true
-              echo "::endgroup::"
-              echo "::error title=Gradle build failed::见上方两个分组"
-              exit 1
-            }
+            2>&1 | tee /tmp/gradle-build.log
           echo "构建成功。完整 Gradle 日志在 /tmp/gradle-build.log"
-          tail -5 /tmp/gradle-build.log || true
+
+      # 构建失败时把完整 Gradle 日志传上来。
+      # 之所以需要：失败现场在 runner 上，job 一结束就没了；而本地无法复现
+      # （release 用的 keystore 来自 Secrets，沙箱里也跑不通 release）。
+      # 只失败时上传 ⇒ 成功时零额外开销。
+      - name: Upload Gradle log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log-${{ github.run_id }}
+          path: /tmp/gradle-build.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       # 断言：必须正好 4 个 APK，且 2 flavor × 2 ABI 齐全。少一个就大声失败，
       # 不允许"构建成功但产物不全"这种假通过。

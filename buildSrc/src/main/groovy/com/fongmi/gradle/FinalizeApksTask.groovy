@@ -65,11 +65,63 @@ abstract class FinalizeApkWorkAction implements WorkAction<FinalizeApkParameters
             align(filtered, aligned)
             sign(aligned, signed)
             Files.move(signed.toPath(), outputApk.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        } catch (Throwable t) {
+            dumpFailure(t, abi, inputApk, outputApk, filtered, aligned, signed)
+            throw t
         } finally {
             Files.deleteIfExists(filtered.toPath())
             Files.deleteIfExists(aligned.toPath())
             Files.deleteIfExists(signed.toPath())
         }
+    }
+
+    /**
+     * 失败现场 dump —— 重抛之前先把现场打到 stderr。
+     *
+     * 为什么必须有这个：本 work 是通过 AGP 的 artifact transform 挂上去的
+     * （见 AbiApkPackaging.configureFinalizer 里的
+     *   variant.artifacts.use(finalizeTask).wiredWithDirectories(...).toTransformMany(APK)）。
+     * 一旦这里抛异常，AGP 的 PackageAndroidArtifact$IncrementalSplitterRunnable 会把它
+     * 包装成一个**空异常**：Gradle 的 "What went wrong" 里只剩
+     *
+     *     > A failure occurred while executing
+     *       com.android.build.gradle.tasks.PackageAndroidArtifact$IncrementalSplitterRunnable
+     *
+     * —— 既没有 message、也没有 Caused by，连 --stacktrace 都拿不到线索。
+     * 2026-09-30 run 36674838783 实测就是这个形态，当时完全无法定位。
+     * 而且同一份代码在 run 36665462723 / 36676451105 上又能成功 ⇒ 这是个**间歇性**失败，
+     * 更需要在它真的发生时留下现场。
+     *
+     * 刻意捕获 Throwable 而不是 Exception：目标里也可能是 Error（OOM 之类）。
+     */
+    private static void dumpFailure(Throwable t, String abi, File inputApk, File outputApk,
+                                    File filtered, File aligned, File signed) {
+        def out = System.err
+        def size = { File f -> f.exists() ? f.length() : -1L }
+        def mb = { long b -> "${(b / 1024L / 1024L)} MB" }
+        out.println("========== FINALIZE APK FAILURE ==========")
+        out.println("abi         = ${abi}")
+        out.println("inputApk    = ${inputApk} exists=${inputApk.exists()} size=${size(inputApk)}")
+        out.println("outputApk   = ${outputApk} parentExists=${outputApk.parentFile.exists()}")
+        out.println("filtered    = ${filtered} exists=${filtered.exists()} size=${size(filtered)}")
+        out.println("aligned     = ${aligned} exists=${aligned.exists()} size=${size(aligned)}")
+        out.println("signed      = ${signed} exists=${signed.exists()} size=${size(signed)}")
+        def dir = outputApk.parentFile
+        out.println("usableSpace = ${dir.usableSpace} (${mb(dir.usableSpace)}) @ ${dir}")
+        out.println("heap        = free ${mb(Runtime.runtime.freeMemory())} / max ${mb(Runtime.runtime.maxMemory())}")
+        out.println("throwable   = ${t.getClass().getName()}: ${t.message}")
+        out.println("--- stack trace ---")
+        t.printStackTrace(out)
+        out.println("--- cause chain ---")
+        def c = t.cause
+        def depth = 1
+        while (c != null) {
+            out.println("  [${depth}] ${c.getClass().getName()}: ${c.message}")
+            c = c.cause
+            depth++
+        }
+        out.println("========== END FINALIZE APK FAILURE ==========")
+        out.flush()
     }
 
     private static void filterChaquopyAssets(File inputApk, File filtered, String abi, String removeAbi) {
@@ -134,6 +186,11 @@ abstract class FinalizeApkWorkAction implements WorkAction<FinalizeApkParameters
     private void align(File inputApk, File outputApk) {
         execOperations.exec {
             commandLine parameters.zipalignFile.get().asFile.absolutePath, '-P', '16', '-f', '4', inputApk.absolutePath, outputApk.absolutePath
+            // 诊断用：exec 的输出默认走 Gradle 的 INFO 级日志，不开 --info 就完全看不到
+            // zipalign 自己打的报错（zip 结构异常、内存不足……）。
+            // 直接转发到进程 stderr ⇒ 无论日志级别都可见，而且不必把整个构建开到 --info
+            // （--info 对 8 分钟的构建输出量很大，有撑爆 CI 单 job 日志上限的风险）。
+            errorOutput = System.err
         }
     }
 
@@ -166,6 +223,8 @@ abstract class FinalizeApkWorkAction implements WorkAction<FinalizeApkParameters
                     '--key-pass', 'env:APK_KEY_PASS', '--v1-signing-enabled', 'true',
                     '--v2-signing-enabled', 'true', '--v3-signing-enabled', 'false',
                     '--v4-signing-enabled', 'false', '--out', outputApk.absolutePath, inputApk.absolutePath
+            // 同上：apksigner 的报错也直接转 stderr，免得必须开 --info 才看得见。
+            errorOutput = System.err
         }
     }
 }
