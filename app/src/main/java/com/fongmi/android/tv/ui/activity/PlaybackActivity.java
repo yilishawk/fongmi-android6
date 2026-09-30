@@ -5,6 +5,7 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.view.View;
@@ -395,8 +396,22 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
         onServiceConnected();
     }
 
+    /**
+     * Activity.isInPictureInPictureMode() 是 **API 24** 新增的方法，minSdk=23 上直接调用会抛
+     * NoSuchMethodError。它是 Error 而不是 Exception —— 上游那些 catch (Exception) 拦不住，
+     * 会一路穿透到 UI 线程（真机实测：VideoActivity.onStop -> 本类 onStop 崩溃）。
+     *
+     * 低于 24 根本没有画中画模式这个概念，返回 false 就是正确语义。
+     *
+     * 本类位于 app/src/main，mobile / leanback 两个 flavor 共用，所以把门禁收在这里给子类复用
+     * （VideoActivity / LiveActivity 原先各有 3 处裸调用，同样会崩）。
+     */
+    protected boolean isInPiP() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode();
+    }
+
     private void closePiP() {
-        if (!isInPictureInPictureMode()) return;
+        if (!isInPiP()) return;
         detach();
         finish();
     }
@@ -616,7 +631,7 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
     protected void onStop() {
         super.onStop();
         if (isOwner() && (isFinishing() || PlayerSetting.isBackgroundOff())) pausePlayback();
-        if (!isInPictureInPictureMode()) detachPlayerView();
+        if (!isInPiP()) detachPlayerView();
     }
 
     @Override

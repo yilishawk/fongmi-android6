@@ -405,7 +405,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         mAnimator = new ValueAnimator();
         mAnimator.setInterpolator(new DecelerateInterpolator());
         mAnimator.addUpdateListener(animation -> {
-            if (isLand() || isFullscreen() || isInPictureInPictureMode()) return;
+            if (isLand() || isFullscreen() || isInPiP()) return;
             mFrameParams.height = (int) animation.getAnimatedValue();
             mBinding.video.setLayoutParams(mFrameParams);
         });
@@ -1156,7 +1156,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     private void showControl() {
-        if (service() == null || isInPictureInPictureMode()) return;
+        if (service() == null || isInPiP()) return;
         mBinding.control.danmaku.setVisibility(isLock() || !player().haveDanmaku() ? View.GONE : View.VISIBLE);
         mBinding.control.setting.setVisibility(mHistory == null || isFullscreen() ? View.GONE : View.VISIBLE);
         mBinding.control.right.rotate.setVisibility(isFullscreen() && !isLock() ? View.VISIBLE : View.GONE);
@@ -1411,7 +1411,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     private void changeHeight() {
-        if (isLand() || isFullscreen() || isInPictureInPictureMode()) return;
+        if (isLand() || isFullscreen() || isInPiP()) return;
         int videoWidth = player().getVideoWidth();
         int videoHeight = player().getVideoHeight();
         if (videoWidth == 0 || videoHeight == 0) return;
