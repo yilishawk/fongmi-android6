@@ -209,12 +209,41 @@ jobs:
         run: |
           chmod +x ./gradlew
           rm -rf Release/apk
+          # 构建前的环境观测（只读，不参与构建）。
+          # 2026-09-30 的两次 run 都在 packageXxxRelease 上失败/挂起，需要区分
+          # "磁盘写满 / 内存不足 / worker 并发" 这几种可能 —— 光看 Task 日志区分不了。
+          echo "--- 磁盘 ---"; df -h "$GITHUB_WORKSPACE" /tmp || true
+          echo "--- 内存 ---"; free -m || true
+          echo "--- CPU ---";  nproc || true
           # :app:assembleRelease 一次覆盖 2 flavor × 2 ABI = 4 个 APK。
           # （用 :app: 限定，避免根级 assembleRelease 顺带把 catvod/quickjs 的 release 变体也编一遍。）
           # ABI splits 由 buildSrc 的 AbiApkPackaging 无条件开启，universalApk=false。
+          #
+          # --stacktrace：run 36674838783 只报
+          #   "A failure occurred while executing ...IncrementalSplitterRunnable"，
+          #   **连 Caused by 都没有** ⇒ 根因被 AGP 吞了，只能靠完整堆栈定位。
+          #   那条 transform 就是 buildSrc 的 FinalizeApksTask（zipalign + apksigner）。
+          # --info：execOperations.exec 的输出默认是 INFO 级，不开就看不到
+          #   zipalign / apksigner 自己的报错。
+          # 输出重定向到文件再按需裁剪：--info 对 8 分钟的构建会产生大量输出，
+          #   直接打给 CI 有撑爆单 job 日志上限的风险。
           ./gradlew :app:assembleRelease \
             -PcoexistSuffix='${{ steps.meta.outputs.coexist_suffix }}' \
-            --no-daemon
+            --no-daemon \
+            --stacktrace \
+            --info \
+            > /tmp/gradle-build.log 2>&1 || {
+              echo "::group::Gradle 失败：关键行"
+              grep -nE "Caused by|FAILURE:|What went wrong|OutOfMemory|ExecException|Incomplete Chaquopy|Killed|error:|Exception" /tmp/gradle-build.log | tail -80 || true
+              echo "::endgroup::"
+              echo "::group::Gradle 失败：末尾 150 行"
+              tail -150 /tmp/gradle-build.log || true
+              echo "::endgroup::"
+              echo "::error title=Gradle build failed::见上方两个分组"
+              exit 1
+            }
+          echo "构建成功。完整 Gradle 日志在 /tmp/gradle-build.log"
+          tail -5 /tmp/gradle-build.log || true
 
       # 断言：必须正好 4 个 APK，且 2 flavor × 2 ABI 齐全。少一个就大声失败，
       # 不允许"构建成功但产物不全"这种假通过。
