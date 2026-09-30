@@ -2,12 +2,12 @@ package com.fongmi.android.tv.bean;
 
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.text.Html;
 import android.text.TextUtils;
 import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.text.HtmlCompat;
 
 import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.impl.Diffable;
@@ -132,7 +132,11 @@ public class Vod implements Parcelable, Diffable<Vod> {
     }
 
     public String getName() {
-        return TextUtils.isEmpty(vodName) ? "" : Html.fromHtml(vodName, Html.FROM_HTML_MODE_LEGACY).toString().trim();
+        // Html.fromHtml(String,int) 是 API 24 新增重载，本分支 minSdk=23 会 NoSuchMethodError
+        // （2026-09-30 电视端 MiTV4-ANSM0 / Android 6.0.1 实测崩溃）。
+        // HtmlCompat.fromHtml 在 API 24+ 内部转调两参重载，以下则退化成单参 Html.fromHtml(String)，
+        // 与 FROM_HTML_MODE_LEGACY 语义一致。
+        return TextUtils.isEmpty(vodName) ? "" : HtmlCompat.fromHtml(vodName, HtmlCompat.FROM_HTML_MODE_LEGACY).toString().trim();
     }
 
     public void setName(String vodName) {

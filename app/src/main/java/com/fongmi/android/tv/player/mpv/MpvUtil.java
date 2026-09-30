@@ -2,6 +2,7 @@ package com.fongmi.android.tv.player.mpv;
 
 import android.annotation.SuppressLint;
 import android.content.pm.PackageManager;
+import android.os.Build;
 
 import androidx.media3.common.Player;
 import androidx.media3.common.util.Util;
@@ -47,6 +48,10 @@ public final class MpvUtil {
     }
 
     public static boolean isVulkanSupported() {
+        // hasSystemFeature(String, int) 是 **API 24** 新增重载，minSdk=23 上会 NoSuchMethodError。
+        // 调用点（SettingPlayerActivity:72 / SettingPlayerFragment:75 / 本类:113）都没有门禁，
+        // 所以这里补门禁：Vulkan 本身也是 API 24 才有的平台特性，API 23 返回 false 即正确语义。
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false;
         return App.get().getPackageManager().hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_VERSION, VULKAN_1_2);
     }
 

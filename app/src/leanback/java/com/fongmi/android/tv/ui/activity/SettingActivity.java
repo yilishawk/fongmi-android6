@@ -3,6 +3,7 @@ package com.fongmi.android.tv.ui.activity;
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.view.View;
 
 import androidx.viewbinding.ViewBinding;
@@ -24,6 +25,7 @@ import com.fongmi.android.tv.impl.Callback;
 import com.fongmi.android.tv.impl.ConfigListener;
 import com.fongmi.android.tv.impl.LiveListener;
 import com.fongmi.android.tv.impl.SiteListener;
+import com.fongmi.android.tv.impl.UpdateProxyListener;
 import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.setting.Setting;
 import com.fongmi.android.tv.ui.base.BaseActivity;
@@ -34,6 +36,7 @@ import com.fongmi.android.tv.ui.dialog.HistoryDialog;
 import com.fongmi.android.tv.ui.dialog.LiveDialog;
 import com.fongmi.android.tv.ui.dialog.RestoreDialog;
 import com.fongmi.android.tv.ui.dialog.SiteDialog;
+import com.fongmi.android.tv.ui.dialog.UpdateProxyDialog;
 import com.fongmi.android.tv.utils.FileUtil;
 import com.fongmi.android.tv.utils.Notify;
 import com.fongmi.android.tv.utils.PermissionUtil;
@@ -47,7 +50,7 @@ import org.greenrobot.eventbus.ThreadMode;
 import java.util.ArrayList;
 import java.util.List;
 
-public class SettingActivity extends BaseActivity implements ConfigListener, SiteListener, LiveListener, DohDialog.Listener {
+public class SettingActivity extends BaseActivity implements ConfigListener, SiteListener, LiveListener, DohDialog.Listener, UpdateProxyListener {
 
     private ActivitySettingBinding mBinding;
     private String[] size;
@@ -87,6 +90,12 @@ public class SettingActivity extends BaseActivity implements ConfigListener, Sit
         mBinding.incognitoText.setText(Setting.getSwitch(Setting.isIncognito()));
         mBinding.debugLogText.setText(Setting.getSwitch(Setting.isDebugLog()));
         mBinding.sizeText.setText((size = ResUtil.getStringArray(R.array.select_size))[PlayerSetting.getSize()]);
+        mBinding.updateProxyText.setText(getUpdateProxyText());
+    }
+
+    private String getUpdateProxyText() {
+        String proxy = Setting.getUpdateProxy();
+        return TextUtils.isEmpty(proxy) ? getString(R.string.setting_off) : proxy;
     }
 
     private void setCacheText() {
@@ -111,6 +120,7 @@ public class SettingActivity extends BaseActivity implements ConfigListener, Sit
         mBinding.danmaku.setOnClickListener(this::onDanmaku);
         mBinding.restore.setOnClickListener(this::onRestore);
         mBinding.version.setOnClickListener(this::onVersion);
+        mBinding.updateProxy.setOnClickListener(this::setUpdateProxy);
         mBinding.vod.setOnLongClickListener(this::onVodEdit);
         mBinding.vodHome.setOnClickListener(this::onVodHome);
         mBinding.live.setOnLongClickListener(this::onLiveEdit);
@@ -233,6 +243,17 @@ public class SettingActivity extends BaseActivity implements ConfigListener, Sit
 
     private void onVersion(View view) {
         Updater.create().force().start(this);
+    }
+
+    // 更新下载代理（URL 前缀）：点击弹输入框，落盘后刷新行文本。
+    private void setUpdateProxy(View view) {
+        UpdateProxyDialog.show(this);
+    }
+
+    @Override
+    public void setUpdateProxy(String proxy) {
+        Setting.putUpdateProxy(proxy);
+        mBinding.updateProxyText.setText(getUpdateProxyText());
     }
 
     private void setWallDefault(View view) {

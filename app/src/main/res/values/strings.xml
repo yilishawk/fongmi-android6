@@ -280,6 +280,9 @@
     <string name="setting_backup">Backup</string>
     <string name="setting_restore">Restore</string>
     <string name="setting_version">Version</string>
+    <string name="setting_update_proxy">Update proxy</string>
+    <string name="update_proxy_hint">https://gh-proxy.org/</string>
+    <string name="update_proxy_tip">URL prefix, only used to speed up app update downloads</string>
     <string name="setting_choose">Choose</string>
     <string name="setting_off">Off</string>
     <string name="setting_on">On</string>

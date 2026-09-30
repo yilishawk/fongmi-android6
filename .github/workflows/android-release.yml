@@ -282,6 +282,59 @@ jobs:
           fi
           echo "✅ 4 个 APK 的包名与 v1 签名都正确"
 
+      # 生成更新检测用的元数据，和 APK 一起放进 release。
+      #
+      # 内容就是 App 端 Updater.doInBackground() 读的三个字段：
+      #   name -> 弹窗标题里的版本号（versionName）
+      #   desc -> 弹窗正文（release notes）
+      #   code -> 与 BuildConfig.VERSION_CODE 比较，只有更大才提示更新
+      #
+      # 资产名 <flavor>.json，App 端由 Github.getJson(BuildConfig.FLAVOR) 取，
+      # 经 releases/latest/download/<flavor>.json 这个稳定别名访问。
+      #
+      # 用 python 而不是 printf/sed 生成：notes 里可能有引号、换行、反斜杠，
+      # 手工拼 JSON 会生成非法文档，而 App 端解析失败是静默的（catch 掉），
+      # 不会有人发现 —— 所以这里必须用真正的 JSON 序列化。
+      - name: Generate update metadata
+        env:
+          VERSION_NAME: ${{ steps.meta.outputs.version_name }}
+          VERSION_CODE: ${{ steps.meta.outputs.version_code }}
+          APP_ID: ${{ steps.meta.outputs.app_id }}
+          NOTES_RAW: ${{ inputs.release_notes }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+
+          notes = os.environ["NOTES_RAW"].replace("\\n", "\n").strip()
+          if not notes:
+              notes = "Android 6 (API 23) 分支在线构建。包名：" + os.environ["APP_ID"]
+
+          meta = {
+              "name": os.environ["VERSION_NAME"],
+              "desc": notes,
+              "code": int(os.environ["VERSION_CODE"]),
+          }
+
+          for dev in ("leanback", "mobile"):
+              path = os.path.join("dist", dev + ".json")
+              with open(path, "w", encoding="utf-8") as fh:
+                  json.dump(meta, fh, ensure_ascii=False, indent=2)
+              print("生成", path, "->", meta["name"], "code", meta["code"])
+          PY
+
+          # 断言：两个 JSON 都要在，且必须能被解析。少一个或格式坏掉就大声失败，
+          # 不允许"构建成功但元数据缺失"这种假通过。
+          for DEV in leanback mobile; do
+            F="dist/$DEV.json"
+            if [ ! -s "$F" ]; then
+              echo "::error title=Missing update metadata::$F 没生成或为空"
+              exit 1
+            fi
+          done
+          python3 -c "import json,sys; [json.load(open('dist/%s.json' % d, encoding='utf-8')) for d in ('leanback','mobile')]" \
+            || { echo "::error title=Invalid update metadata::dist/*.json 不是合法 JSON"; exit 1; }
+          echo "✅ leanback.json / mobile.json 已生成且可解析"
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -300,7 +353,7 @@ jobs:
             --title "${{ steps.meta.outputs.title }}" \
             --notes "$NOTES" \
             $PRERELEASE_FLAG \
-            dist/*.apk
+            dist/*.apk dist/*.json
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4

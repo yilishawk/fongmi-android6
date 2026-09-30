@@ -279,6 +279,9 @@
     <string name="setting_backup">备份</string>
     <string name="setting_restore">恢复</string>
     <string name="setting_version">版本</string>
+    <string name="setting_update_proxy">更新下载代理</string>
+    <string name="update_proxy_hint">https://gh-proxy.org/</string>
+    <string name="update_proxy_tip">URL 前缀，只用于加速 APP 更新下载</string>
     <string name="setting_choose">选择</string>
     <string name="setting_off">关</string>
     <string name="setting_on">开</string>

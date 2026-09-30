@@ -130,6 +130,26 @@ public class Setting {
         Prefers.put("update", update);
     }
 
+    // =========================================================================
+    // 更新下载加速前缀（2026-09-30 新增）
+    //
+    // 注意语义：这是 **URL 前缀**，不是 HTTP/SOCKS 代理。gh-proxy 这类服务的用法是
+    //   https://gh-proxy.org/https://github.com/<owner>/<repo>/releases/download/...
+    // 所以 Updater 里是字符串拼接，与走 OkHttp.selector() 的壳代理（isShellProxy）
+    // 完全是两回事，别混用。
+    //
+    // 范围：只作用于 Updater 下载 APK；更新检测用的 release JSON 不套前缀。
+    // 默认空串 = 直连。
+    // =========================================================================
+
+    public static String getUpdateProxy() {
+        return Prefers.getString("update_proxy");
+    }
+
+    public static void putUpdateProxy(String proxy) {
+        Prefers.put("update_proxy", proxy == null ? "" : proxy.trim());
+    }
+
     public static boolean isAdblock() {
         return Prefers.getBoolean("adblock", true);
     }

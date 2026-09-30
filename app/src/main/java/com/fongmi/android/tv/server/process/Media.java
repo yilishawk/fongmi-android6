@@ -15,7 +15,8 @@ import com.fongmi.android.tv.service.PlaybackService;
 import com.google.gson.JsonObject;
 
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 
 import fi.iki.elonen.NanoHTTPD.IHTTPSession;
 import fi.iki.elonen.NanoHTTPD.Response;
@@ -31,13 +32,21 @@ public class Media implements Process {
     public Response doResponse(IHTTPSession session, String url, Map<String, String> files) {
         PlaybackService service = Server.get().getService();
         if (service == null) return Nano.ok("{}");
-        CompletableFuture<String> future = new CompletableFuture<>();
-        App.post(() -> future.complete(build(service.player()).toString()));
+        // 原实现用 CompletableFuture 把主线程的结果搬回本线程。但 CompletableFuture 是
+        // **API 24** 才有的平台类（desugar_jdk_libs 2.1.5 的 desugar.json 里没有它，
+        // 包内也没有对应类定义），本分支 minSdk=23 ⇒ NoClassDefFoundError。
+        // 这里换成 API 1 就有的等价组合：主线程算好结果 -> 计数归零 -> 本线程取走。
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> result = new AtomicReference<>("{}");
+        App.post(() -> {
+            result.set(build(service.player()).toString());
+            latch.countDown();
+        });
         try {
-            return Nano.ok(future.get());
-        } catch (Exception ignored) {
-            return Nano.ok("{}");
+            latch.await();
+        } catch (InterruptedException ignored) {
         }
+        return Nano.ok(result.get());
     }
 
     private JsonObject build(PlayerManager player) {
