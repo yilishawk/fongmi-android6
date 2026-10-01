@@ -114,7 +114,24 @@ public final class MpvUtil {
     }
 
     private static MpvAndroidOptions buildAndroidOptions(File shaderCacheDirectory) {
-        MpvAndroidOptions.Builder builder = new MpvAndroidOptions.Builder().setShaderCacheDirectory(shaderCacheDirectory).setAudioPassthroughEnabled(DecodeSetting.isAudioPassThrough()).setDolbyVisionOutputPolicy(DecodeSetting.getDolbyVisionOutputPolicy());
+        MpvAndroidOptions.Builder builder = new MpvAndroidOptions.Builder().setShaderCacheDirectory(shaderCacheDirectory).setDolbyVisionOutputPolicy(DecodeSetting.getDolbyVisionOutputPolicy());
+        // 音频直通只在「开启」时才下发，关闭时**根本不调用**。
+        //
+        // 为什么不能无条件下发（原来的写法）：
+        //   AAR 里 setAudioPassthroughEnabled() 会同时把 audioPassthroughEnabledSet 置 true，
+        //   而 options/MpvPlayerOptionDefaults.addAudioOutputOptions() 只要看到 Set=true 就会调
+        //   setRequestedPassthroughCodecs(enabled ? "ac3,dts-hd,eac3,truehd" : "")。
+        //   于是「关闭」写下去的是**空串**而不是 null；options/MpvOptions.applyAudioPassthrough()
+        //   只对 null 短路（ifnull），空串照样会下发 `audio-spdif=`（applyPreInit + applyAppOwned 各一次）。
+        //
+        // 不调用 ⇒ Set=false ⇒ MpvPlayerOptionDefaults 完全不碰 requestedPassthroughCodecs，
+        // 保持 Builder 默认的 null ⇒ MpvAudioCapabilities.getSupportedPassthroughCodecs(ctx, null)
+        // 原样返回 null ⇒ applyAudioPassthrough 短路 ⇒ **完全不写 audio-spdif 选项**，
+        // 与上游「从未设置过该开关」的语义完全等价。
+        //
+        // 边界：开启时的行为一字未改；关闭时对 mpv 而言同样是「无直通编码」，
+        // 预期用户可见行为不变，差别只是不再下发那个空值选项。
+        if (DecodeSetting.isAudioPassThrough()) builder.setAudioPassthroughEnabled(true);
         builder.setVulkanEnabled(isVulkanSupported() && PlayerSetting.isMpvVulkan());
         builder.setGpuNextEnabled(PlayerSetting.isMpvGpuNext());
         return builder.build();
