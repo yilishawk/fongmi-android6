@@ -104,7 +104,14 @@ public class Updater implements Download.Callback, UpdateListener {
             String name = object.optString("name");
             String desc = object.optString("desc");
             int code = object.optInt("code");
-            if (code <= BuildConfig.VERSION_CODE) return;
+            // 2026-10-01：原来是直接 return（静默）。用户点「版本」后只看到「正在检测更新…」，
+            // 之后什么都不发生，分不清是「已是最新」还是「请求失败」。这里补一句明确反馈。
+            // 注意：**不要**在这里动 Setting.putUpdate —— 那是持久化的「自动检查更新」偏好
+            // （只有 UpdateDialog 的 onCancel 才置 false），在此置 false 会把用户的自动检查一并关掉。
+            if (code <= BuildConfig.VERSION_CODE) {
+                App.post(() -> Notify.show(R.string.update_latest));
+                return;
+            }
             App.post(() -> show(activity, name, desc));
         } catch (Exception e) {
             e.printStackTrace();
