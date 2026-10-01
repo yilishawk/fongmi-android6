@@ -8,6 +8,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -23,6 +24,7 @@ import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.Player;
 import androidx.media3.common.VideoSize;
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm;
+import androidx.media3.mpvplayer.MpvPlayer;
 import androidx.media3.session.MediaController;
 import androidx.media3.session.SessionToken;
 import androidx.media3.ui.PlayerSeekView;
@@ -428,8 +430,58 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
         player().bindPlayerView(getPlayerView());
         danmakuController.bind(getPlayerView());
         getPlayerView().setPlayer(player);
+        demoteMpvOsdSurface(player);
         syncDanmakuSource();
         restoreDebugView();
+    }
+
+    /**
+     * 2026-10-01 —— MPV 黑屏判定实验（甲）。
+     *
+     * <p>现象：只有 MPV 引擎黑屏（有声无画），Exo 正常；手机和电视都黑；而 mpv 侧日志显示
+     * 解码器、VO、首帧全部正常。
+     *
+     * <p>机制：media3-ui 的 {@code PlayerView.setPlayer()} 无条件调用
+     * {@code MpvOsdSurfaceBridge.setPlayer(player)}，后者用反射找
+     * {@code player.getClass().getMethod("setOsdSurfaceView", SurfaceView.class)}：
+     * {@code MpvPlayer} 有这个方法 ⇒ new 一个 SurfaceView、{@code setZOrderMediaOverlay(true)}、
+     * 追加到 contentFrame 最上层，并由 {@code MpvSurfaceController.setOsdOutput()} 打开
+     * {@code setDirectOsdOutputConfigured(true)}，让 mpv 直接往这个面输出 OSD。
+     * {@code ExoPlayer} 没有这个方法 ⇒ 抛 {@code NoSuchMethodException} ⇒ 不建面。
+     * 这正是「Exo 正常 / MPV 黑屏」的形状，且与 API 23 无关。
+     *
+     * <p>SurfaceView 的层序由 sublayer 决定，不看 View 顺序：默认 {@code -2}，
+     * {@code setZOrderMediaOverlay(true)} 为 {@code -1}，值越大越靠上。
+     * 因此默认状态下 OSD 面（-1）盖在视频面（-2）之上。这里把两者对调：
+     * 视频面提到 -1，OSD 面压回 -2。
+     *
+     * <p>必须在 OSD 面的 Surface 尚未创建时调用（即 {@code setPlayer} 之后同一帧内），
+     * 否则 {@code setZOrderMediaOverlay} 会销毁并重建已有 Surface。
+     *
+     * <p>影响面：只在 MPV 引擎路径生效（{@code instanceof MpvPlayer}）；Exo 引擎找不到多余的
+     * SurfaceView，直接返回。弹幕（{@code DanmakuPlayerViewController}）是普通 View，
+     * 不占 SurfaceView，不受影响。
+     *
+     * <p>回退：删掉本方法、{@link #collectSurfaceViews} 以及 syncPlayerView 里的那一行调用即可。
+     */
+    private void demoteMpvOsdSurface(Player player) {
+        if (!(player instanceof MpvPlayer)) return;
+        PlayerView playerView = getPlayerView();
+        View videoSurface = playerView.getVideoSurfaceView();
+        List<SurfaceView> found = new ArrayList<>();
+        collectSurfaceViews(playerView, found);
+        for (SurfaceView surface : found) {
+            if (surface == videoSurface) continue;
+            surface.setZOrderMediaOverlay(false);
+        }
+        if (videoSurface instanceof SurfaceView) ((SurfaceView) videoSurface).setZOrderMediaOverlay(true);
+    }
+
+    private static void collectSurfaceViews(View view, List<SurfaceView> out) {
+        if (view instanceof SurfaceView) out.add((SurfaceView) view);
+        if (!(view instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) view;
+        for (int i = 0; i < group.getChildCount(); i++) collectSurfaceViews(group.getChildAt(i), out);
     }
 
     private void restoreDebugView() {
