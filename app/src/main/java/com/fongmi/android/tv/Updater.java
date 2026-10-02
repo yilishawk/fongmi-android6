@@ -1,5 +1,6 @@
 package com.fongmi.android.tv;
 
+import android.os.Build;
 import android.text.TextUtils;
 import android.view.View;
 
@@ -12,6 +13,7 @@ import com.fongmi.android.tv.utils.Download;
 import com.fongmi.android.tv.utils.FileUtil;
 import com.fongmi.android.tv.utils.Github;
 import com.fongmi.android.tv.utils.Notify;
+import com.fongmi.android.tv.utils.PermissionUtil;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Task;
 import com.github.catvod.net.OkHttp;
@@ -25,8 +27,11 @@ public class Updater implements Download.Callback, UpdateListener {
 
     private static final String BASE_APP_ID = "com.fongmi.android.tv";
 
-    private final Download download;
+    // ⚠ download 不是 final：API ≤ 23 首次下载前要先拿到 WRITE_EXTERNAL_STORAGE，权限到手后
+    // 下载目标会从私有 cache 变成公共 Download/（而 Download 的目标在构造时就固定了）⇒ 必须重建。
+    private Download download;
     private UpdateDialog dialog;
+    private FragmentActivity activity;
 
     private Updater() {
         this.download = Download.create(getDownloadUrl(), getFile());
@@ -37,7 +42,14 @@ public class Updater implements Download.Callback, UpdateListener {
     }
 
     private File getFile() {
-        return Path.cache("update.apk");
+        // ⭐ API ≤ 23：安装器只认 file://，而且它拿到 URI 之后是 `new File(uri.getPath())`
+        // **自己按路径读文件**（AOSP PackageInstallerActivity，详见 FileUtil.openFile 的注释）
+        // ⇒ 包必须落在安装器读得到的地方。应用私有目录和 Android/data/<pkg> 都不行，
+        // 只有共享外部存储的公共目录可以（判据集中在 FileUtil.getInstallStagingDir）。
+        // 有写权限就直接下到那里，**一次拷贝都不需要**；没有就退回私有目录，
+        // 安装前再由 FileUtil 兜底搬运（搬不动就保持旧行为，不额外制造故障面）。
+        File dir = FileUtil.getInstallStagingDir();
+        return dir == null ? Path.cache("update.apk") : new File(dir, "update.apk");
     }
 
     private String getJson() {
@@ -120,12 +132,27 @@ public class Updater implements Download.Callback, UpdateListener {
 
     private void show(FragmentActivity activity, String version, String desc) {
         dismiss();
+        this.activity = activity;
         dialog = UpdateDialog.create().title(ResUtil.getString(R.string.update_version, version)).desc(desc).listener(this).show(activity);
     }
 
     @Override
     public void onConfirm(View view) {
         view.setEnabled(false);
+        // ⭐ API ≤ 23：装包必须经过**共享外部存储的公共目录**（见 FileUtil.getInstallStagingDir）——
+        // 应用私有目录和 Android/data/<pkg> 安装器都读不到，下完了也装不上。而写公共目录需要
+        // WRITE_EXTERNAL_STORAGE。所以先要权限；要不到也继续走（退回私有目录，
+        // 至少不改变"能下、能提示"的既有行为）。
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N && !Setting.hasFileAccess() && activity != null && !activity.isFinishing()) {
+            PermissionUtil.requestFile(activity, granted -> prepareDownload());
+            return;
+        }
+        prepareDownload();
+    }
+
+    /** 权限到手后下载目标可能变了 ⇒ 重建 Download 再开始下（目标在构造时固定，不能复用）。 */
+    private void prepareDownload() {
+        download = Download.create(getDownloadUrl(), getFile());
         download.start(this);
     }
 

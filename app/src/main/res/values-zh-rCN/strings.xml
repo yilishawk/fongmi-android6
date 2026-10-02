@@ -379,6 +379,7 @@
     <string name="update_check">正在检测更新…</string>
     <string name="update_latest">已是最新版本</string>
     <string name="update_confirm">更新</string>
+    <string name="update_install_unavailable">系统没有可用的安装组件，请手动安装。</string>
 
     <!-- Crash -->
     <string name="crash_info">发生意外错误\n抱歉给您带来不便</string>

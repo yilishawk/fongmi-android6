@@ -1,9 +1,14 @@
 package com.fongmi.android.tv.setting;
 
+import android.Manifest;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.Environment;
 import android.text.TextUtils;
 import android.webkit.WebSettings;
+
+import androidx.core.content.ContextCompat;
 
 import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.BuildConfig;
@@ -128,6 +133,17 @@ public class Setting {
 
     public static void putUpdate(boolean update) {
         Prefers.put("update", update);
+    }
+
+    /**
+     * 有没有**共享外部存储的写权限**。API ≤ 23 的 APK 安装必须经过公共目录
+     * （安装器只认 file://，且是自己按路径读文件；详见 FileUtil.getInstallStagingDir），
+     * 所以「检查更新 → 下载」之前要先问这个。
+     */
+    public static boolean hasFileAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) return Environment.isExternalStorageManager();
+        return ContextCompat.checkSelfPermission(App.get(), Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+                && ContextCompat.checkSelfPermission(App.get(), Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
     }
 
     // =========================================================================
