@@ -56,6 +56,10 @@ public final class MpvUtil {
     }
 
     public static MpvPlayer buildPlayer(int decode, Player.Listener listener) {
+        // 把 mpv 自己的日志接进 App 调试日志（9978 的 /debug/logs）。
+        // 必须在 build() 之前 —— native init 之后再注册会漏掉起播阶段的日志。
+        // 幂等 + 内部吞异常，绝不影响播放；调试日志关闭时开销 ≈ 一次布尔判断。
+        MpvLogBridge.install();
         MpvPlayer player = new MpvPlayer.Builder(App.get()).setDecode(decode).setConfig(buildConfig()).build();
         setPreferredTextLanguages(player);
         player.addListener(listener);
