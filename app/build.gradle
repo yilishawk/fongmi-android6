@@ -30,11 +30,11 @@ android {
         minSdk libs.versions.minSdk.get().toInteger()
         targetSdk libs.versions.targetSdk.get().toInteger()
         // 563 → 564（2026-09-30）→ 565（2026-10-01）→ 566（2026-10-02）→ 567（2026-10-02，图标/改名）
-        // → 568（2026-10-02，修 API ≤ 23 装包链路）：
+        // → 568（2026-10-02，修 API ≤ 23 装包链路）→ 569（2026-10-02，检测 json 也套加速前缀 + 失败可见）：
         // App 内"检查更新"是拿远端 JSON 的 code 与 BuildConfig.VERSION_CODE 比大小，相等即判定"无需更新"。
         // 不抬的话 CI 产出的 dist/<flavor>.json 里 code 与已装包相同 ⇒ 比较恒为 false ⇒
         // 更新提示永不弹出（每次发版都必须递增）。
-        versionCode 568
+        versionCode 569
         versionName "5.6.3"
         externalNativeBuild {
             cmake {

@@ -20,8 +20,9 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
  * 语义边界（必须说清，否则容易接错地方）：
  *  这个值**不是** HTTP/SOCKS 代理，而是**URL 前缀**，用法是直接拼在下载地址前面
  *  （例如 https://gh-proxy.org/ + https://github.com/...）。
- *  它只作用于更新用的 APK 下载（Updater.getDownloadUrl()）；
- *  更新检测拉取的 release JSON 不走它（Updater 里走 Github.getJson() 直连）。
+ *  它作用于更新链路的两条请求：APK 下载与**更新检测的 release JSON**
+ *  （都经 Updater.applyProxy()）。2026-10-02 起 json 也套 —— 此前只有 APK 套，
+ *  实测发现直连 github.com 时两者是一起挂的（详见 Updater.getDownloadUrl 的注释）。
  *  所以这里**不碰** ProxySetting / OkHttp.selector()，那是壳代理的另一套东西。
  *
  * 结构照抄 SubtitleApiDialog（同样是"一个输入框写一个设置项"），

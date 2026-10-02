@@ -16,6 +16,7 @@ import com.fongmi.android.tv.utils.Notify;
 import com.fongmi.android.tv.utils.PermissionUtil;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Task;
+import com.github.catvod.crawler.DebugLogStore;
 import com.github.catvod.net.OkHttp;
 import com.github.catvod.utils.Path;
 
@@ -32,6 +33,10 @@ public class Updater implements Download.Callback, UpdateListener {
     private Download download;
     private UpdateDialog dialog;
     private FragmentActivity activity;
+    // 这次检查是不是用户手动点「版本」触发的（force()）。自动检查（HomeActivity 启动时，
+    // Setting.getUpdate() 默认 true）失败**不弹**提示 —— 否则每次开机都要打扰一次；
+    // 手动检查才把失败原因摆出来。两条路径都会写 DebugLogStore。
+    private boolean manual;
 
     private Updater() {
         this.download = Download.create(getDownloadUrl(), getFile());
@@ -52,8 +57,14 @@ public class Updater implements Download.Callback, UpdateListener {
         return dir == null ? Path.cache("update.apk") : new File(dir, "update.apk");
     }
 
+    /**
+     * 更新检测用的 release JSON 地址。
+     *
+     * 2026-10-02 起**也套加速前缀**（原来是直连）。原因见 getDownloadUrl 的注释：
+     * 实测直连 github.com 时 json 与 APK 是一起挂的，症结在域不可达而不是 json 特有。
+     */
     private String getJson() {
-        return Github.getJson(BuildConfig.FLAVOR);
+        return applyProxy(Github.getJson(BuildConfig.FLAVOR));
     }
 
     private String getApk() {
@@ -79,18 +90,30 @@ public class Updater implements Download.Callback, UpdateListener {
     }
 
     /**
-     * 下载用的最终 URL：在 APK 地址前套上用户配置的加速前缀。
+     * 套上用户配置的加速前缀。
      *
      * gh-proxy 这类服务是「URL 前缀」而不是 HTTP/SOCKS 代理：
      * https://gh-proxy.org/https://github.com/&lt;owner&gt;/&lt;repo&gt;/releases/download/...
      * 所以这里是字符串拼接，不能走 OkHttp 的 ProxySelector。
      *
-     * 范围：只作用于 APK 下载，更新检测用的 release JSON 不套前缀（2026-09-30 拍板）。
+     * 前缀为空 ⇒ 原样返回，行为与「没有这个功能」逐字节一致（零回归）。
      */
-    private String getDownloadUrl() {
-        String url = getApk();
+    private String applyProxy(String url) {
         String proxy = normalizeProxy(Setting.getUpdateProxy());
         return TextUtils.isEmpty(proxy) ? url : proxy + url;
+    }
+
+    /**
+     * 下载用的最终 URL：APK 地址 + 加速前缀。
+     *
+     * ⚠ 范围变更（2026-10-02）：原先只有这里套前缀，检测用的 release JSON 不套
+     * （2026-09-30 拍板）。但 2026-10-02 实测（`.gradle-user/proxytest.py`）：
+     * 直连 `github.com` 时 **json 与 APK 一起超时**（各 0/2）⇒ 症结是**整个域不可达**，
+     * 不是 json 特有；同一个前缀 + json 实测 200（gh-proxy.com / ghfast.top / ghproxy.net）。
+     * 所以 json 现在也走 applyProxy（见 getJson），两条链路同构。
+     */
+    private String getDownloadUrl() {
+        return applyProxy(getApk());
     }
 
     private String normalizeProxy(String proxy) {
@@ -100,6 +123,7 @@ public class Updater implements Download.Callback, UpdateListener {
     }
 
     public Updater force() {
+        manual = true;
         Notify.show(R.string.update_check);
         Setting.putUpdate(true);
         return this;
@@ -127,6 +151,11 @@ public class Updater implements Download.Callback, UpdateListener {
             App.post(() -> show(activity, name, desc));
         } catch (Exception e) {
             e.printStackTrace();
+            // 2026-10-02：原来是纯静默（只有 printStackTrace）⇒ 用户分不清「已是最新」和「请求失败」。
+            // 现在失败**一定**落 DebugLogStore（9978 /debug/logs 可查，带 URL 与异常）；
+            // 手动点「版本」时再弹一句提示（自动检查不弹，避免每次启动打扰）。
+            DebugLogStore.add("update", "check failed url=" + getJson() + " error=" + e);
+            if (manual) App.post(() -> Notify.show(Notify.getError(R.string.update_failed, e)));
         }
     }
 

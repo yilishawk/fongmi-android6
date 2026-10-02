@@ -154,8 +154,10 @@ public class Setting {
     // 所以 Updater 里是字符串拼接，与走 OkHttp.selector() 的壳代理（isShellProxy）
     // 完全是两回事，别混用。
     //
-    // 范围：只作用于 Updater 下载 APK；更新检测用的 release JSON 不套前缀。
-    // 默认空串 = 直连。
+    // 范围（2026-10-02 起）：APK 下载与**更新检测的 release JSON** 都套（Updater.applyProxy）。
+    // ⚠ 2026-09-30 那条「json 不套前缀」已被实测推翻 —— 直连 github.com 时 json 与 APK
+    // 是一起挂的（各 0/2），症结在域不可达，不是 json 特有。
+    // 默认空串 = 直连（此时行为与「没有本功能」逐字节一致）。
     // =========================================================================
 
     public static String getUpdateProxy() {
