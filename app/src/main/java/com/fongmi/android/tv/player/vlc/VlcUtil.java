@@ -77,10 +77,31 @@ public final class VlcUtil {
             return null;
         }
         try {
-            // 参数列表留空 —— 走 VLC 默认配置。若将来要下发选项（如 :network-caching），
+            // 参数列表默认留空 —— 走 VLC 默认配置。若将来要下发选项（如 :network-caching），
             // 从这里加，不要散落到调用点。
-            LibVLC libVlc = new LibVLC(context.getApplicationContext(), new ArrayList<String>());
-            VlcLog.d("new LibVLC OK: version=" + LibVLC.version());
+            ArrayList<String> options = new ArrayList<>();
+
+            // ⚠⚠ 诊断探针（临时，验完必须删）⚠⚠
+            // 目的：把 native 日志从默认的 error 级抬到 debug 级，才能看到
+            //   vout 模块名 / chroma / display / ANativeWindow 这些上屏链路的关键行。
+            //
+            // 取值依据是**从本 AAR 的 libvlc.so 里读出来的选项帮助文本**，不是记忆：
+            //   @5174006  "This is the verbosity level
+            //              (0=only errors and standard messages, 1=warnings, 2=debug)."
+            //   @4038658  "Verbosity (0,1,2)"
+            //   @5655980  "invalid verbosity level %i"
+            // ⇒ 2 == debug。
+            //
+            // 输出通路：libvlc.so 里有 android_logger 模块 + __android_log_print
+            //   ⇒ 直接进 logcat（tag=VLC）。这条通路上一轮已经真机验证过能拿到 native 日志。
+            //
+            // 自证性：万一该选项被 libvlc_new 拒绝，日志里会出现
+            //   "Unknown option '%s'"（libvlc.so @4006606，error 级）——
+            //   也就是说这个探针要么给出 debug 日志，要么明确告诉你它没生效，不会静默。
+            options.add("--verbose=2");
+
+            LibVLC libVlc = new LibVLC(context.getApplicationContext(), options);
+            VlcLog.d("new LibVLC OK: version=" + LibVLC.version() + " options=" + options);
             return libVlc;
         } catch (Throwable e) {
             VlcLog.e("new LibVLC failed: " + describe(e));
