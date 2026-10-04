@@ -48,6 +48,7 @@ public class VlcPlayerEngine implements PlayerEngine {
         if (libVlc == null) throw new IllegalStateException("libVLC is not loadable");
         this.player = new VlcPlayer(Looper.getMainLooper(), libVlc, decode);
         this.player.addListener(listener);
+        VlcLog.d("VlcPlayerEngine ready: decode=" + decode);
     }
 
     /**
@@ -97,16 +98,17 @@ public class VlcPlayerEngine implements PlayerEngine {
     public void start(PlaySpec spec, long startPositionMs) {
         this.spec = spec;
         if (spec == null || TextUtils.isEmpty(spec.getUrl())) {
-            Log.w(TAG, "start skipped: empty spec");
+            VlcLog.e("start skipped: empty spec");
             return;
         }
         try {
             MediaItem item = MediaItemFactory.from(spec);
+            VlcLog.d("start: url=" + spec.getUrl() + " startMs=" + startPositionMs);
             player.setMediaItem(item, startPositionMs);
             player.prepare();
             player.play();
         } catch (Throwable e) {
-            Log.e(TAG, "start failed", e);
+            VlcLog.e("start failed", e);
         }
     }
 

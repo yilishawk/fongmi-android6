@@ -4,20 +4,17 @@ import static com.fongmi.android.tv.player.engine.PlayerEngine.Type.EXO;
 import static com.fongmi.android.tv.player.engine.PlayerEngine.Type.MPV;
 import static com.fongmi.android.tv.player.engine.PlayerEngine.Type.VLC;
 
-import android.util.Log;
-
 import androidx.media3.common.Player;
 
 import com.fongmi.android.tv.player.exo.ExoPlayerEngine;
 import com.fongmi.android.tv.player.media.PlaySpec;
 import com.fongmi.android.tv.player.mpv.MpvPlayerEngine;
+import com.fongmi.android.tv.player.vlc.VlcLog;
 import com.fongmi.android.tv.player.vlc.VlcPlayerEngine;
 import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.utils.UrlUtil;
 
 public final class PlayerEngineFactory {
-
-    private static final String TAG = "PlayerEngineFactory";
 
     public static PlayerEngine create(int decode, Player.Listener listener) {
         return create(decode, resolve(), listener);
@@ -51,7 +48,7 @@ public final class PlayerEngineFactory {
         try {
             return new VlcPlayerEngine(decode, listener);
         } catch (Throwable e) {
-            Log.e(TAG, "VLC engine init failed, falling back to EXO", e);
+            VlcLog.e("VLC engine init failed, falling back to EXO", e);
             return new ExoPlayerEngine(decode, listener);
         }
     }
@@ -61,15 +58,32 @@ public final class PlayerEngineFactory {
     }
 
     private static PlayerEngine.Type resolve(PlaySpec spec) {
-        if (requiresExo(spec)) return EXO;
-        if (isVlcReady()) return VLC;
-        if (!isMpvReady()) return EXO;
+        if (requiresExo(spec)) {
+            VlcLog.d("resolve(spec) -> EXO (requiresExo: drm=" + (spec.getDrm() != null) + " scheme=" + UrlUtil.scheme(spec.getUrl()) + ")");
+            return EXO;
+        }
+        if (isVlcReady()) {
+            VlcLog.d("resolve(spec) -> VLC");
+            return VLC;
+        }
+        if (!isMpvReady()) {
+            VlcLog.d("resolve(spec) -> EXO (neither VLC nor MPV ready)");
+            return EXO;
+        }
+        VlcLog.d("resolve(spec) -> MPV (isVlc=" + PlayerSetting.isVlc()
+                + " vlcLoadable=" + VlcPlayerEngine.isAvailable() + ")");
         return MPV;
     }
 
     private static PlayerEngine.Type resolve() {
-        if (isVlcReady()) return VLC;
-        return isMpvReady() ? MPV : EXO;
+        if (isVlcReady()) {
+            VlcLog.d("resolve() -> VLC");
+            return VLC;
+        }
+        PlayerEngine.Type type = isMpvReady() ? MPV : EXO;
+        VlcLog.d("resolve() -> " + type + " (isVlc=" + PlayerSetting.isVlc()
+                + " vlcLoadable=" + VlcPlayerEngine.isAvailable() + ")");
+        return type;
     }
 
     private static boolean requiresExo(PlaySpec spec) {

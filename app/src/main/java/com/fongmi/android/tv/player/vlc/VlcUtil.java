@@ -1,7 +1,6 @@
 package com.fongmi.android.tv.player.vlc;
 
 import android.content.Context;
-import android.util.Log;
 
 import org.videolan.libvlc.LibVLC;
 
@@ -53,10 +52,14 @@ public final class VlcUtil {
             System.loadLibrary("vlcjni");
             ok = true;
         } catch (Throwable e) {
-            Log.e(TAG, "loadLibrary failed: " + describe(e));
+            // ⚠ 这条是「手机版只有声音」的第一嫌疑：isLoadable()==false 时
+            //   引擎工厂会**静默退回 mpv**，用户以为在测 VLC，其实跑的是 mpv
+            //   （而 mpv + TextureView 在手机上已知就是「只有声音」）。
+            VlcLog.e("loadLibrary failed -> VLC 引擎将不可用（会退回 mpv/EXO）: " + describe(e));
             ok = false;
         }
         loadable = ok;
+        VlcLog.d("isLoadable=" + ok + " abi=" + android.os.Build.SUPPORTED_ABIS[0]);
         return ok;
     }
 
@@ -70,15 +73,17 @@ public final class VlcUtil {
      */
     public static LibVLC create(Context context) {
         if (!isLoadable()) {
-            Log.w(TAG, "create skipped: native not loadable");
+            VlcLog.d("create skipped: native not loadable");
             return null;
         }
         try {
             // 参数列表留空 —— 走 VLC 默认配置。若将来要下发选项（如 :network-caching），
             // 从这里加，不要散落到调用点。
-            return new LibVLC(context.getApplicationContext(), new ArrayList<String>());
+            LibVLC libVlc = new LibVLC(context.getApplicationContext(), new ArrayList<String>());
+            VlcLog.d("new LibVLC OK: version=" + LibVLC.version());
+            return libVlc;
         } catch (Throwable e) {
-            Log.e(TAG, "new LibVLC failed: " + describe(e));
+            VlcLog.e("new LibVLC failed: " + describe(e));
             return null;
         }
     }
