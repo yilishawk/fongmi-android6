@@ -75,7 +75,10 @@ public interface PlayerEngine {
 
     enum Type {
         EXO,
-        MPV
+        MPV,
+        // 2026-10-04：VLC（甲方案 —— 自写 media3 Player 适配层包装 libVLC）。
+        // ⚠ 追加在末尾：既有的 EXO/MPV 序号不变，任何按序号持久化/比较的地方都不受影响。
+        VLC
     }
 
     record SecondarySubtitleState(@Nullable TrackSelectionOverride primarySelection, @Nullable TrackSelectionOverride explicitSelection, List<TrackSelectionOverride> secondaryCandidates, boolean secondaryPromotedToPrimary) {

@@ -31,6 +31,7 @@
     <string name="play_ed">ED</string>
     <string name="play_exo">EXO</string>
     <string name="play_mpv">MPV</string>
+    <string name="play_vlc">VLC</string>
     <string name="play_other">Other</string>
     <string name="play_next">Next</string>
     <string name="play_prev">Prev</string>
@@ -413,6 +414,7 @@
     <string-array name="select_engine">
         <item>EXO</item>
         <item>MPV</item>
+        <item>VLC</item>
     </string-array>
 
     <string-array name="select_render">

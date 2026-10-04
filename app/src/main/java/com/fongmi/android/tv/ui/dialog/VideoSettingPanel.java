@@ -304,7 +304,14 @@ final class VideoSettingPanel {
         return isPlayerAvailable() && player.getEngine() == PlayerSetting.ENGINE_MPV;
     }
 
+    private boolean isVlc() {
+        return isPlayerAvailable() && player.getEngine() == PlayerSetting.ENGINE_VLC;
+    }
+
     private boolean supportsSharpness() {
+        // VLC 引擎没有视频效果链（VlcPlayerEngine.getEffect() == PlayerEffect.NONE），
+        // 锐化在那边不生效 ⇒ 直接报"不支持"，不给出一个点了没反应的开关。
+        if (isVlc()) return false;
         return !isMpv() || player.supportsVideoSharpness();
     }
 

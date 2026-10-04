@@ -268,6 +268,7 @@ public class PlayerManager implements ParseCallback {
     }
 
     public int getEngine() {
+        if (isVlcEngine()) return PlayerSetting.ENGINE_VLC;
         return isMpvEngine() ? PlayerSetting.ENGINE_MPV : PlayerSetting.ENGINE_EXO;
     }
 
@@ -384,6 +385,10 @@ public class PlayerManager implements ParseCallback {
 
     private boolean isMpvEngine() {
         return engine != null && engine.getType() == PlayerEngine.Type.MPV;
+    }
+
+    private boolean isVlcEngine() {
+        return engine != null && engine.getType() == PlayerEngine.Type.VLC;
     }
 
     public void play() {
