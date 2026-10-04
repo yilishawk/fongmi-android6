@@ -10,6 +10,11 @@ appcompat = "1.8.0"
 biometric = "1.1.0"
 desugar = "2.1.5"
 leanback = "1.2.0"
+# VLC 引擎（甲方案：自写 media3 Player 适配层包装 libVLC）。
+# ⚠ 固定 3.6.3：门禁复验（libc++_shared.so 逐符号比对、Java 层 API 24 越界审计）
+#   都是对着 3.6.3 的 AAR 做的，换版本必须重做。Maven Central 只有 libvlc-all 这个
+#   fat AAR（无 per-ABI 版本），4 个 ABI 全带，靠 ABI splits 裁剪。
+libvlc = "3.6.3"
 lifecycleService = "2.11.0"
 media3 = "1.11.0-alpha01-fongmi"
 nextlib = "1.10.0-0.12.1-fongmi-softload-av3a-ffmpeg901-r1"
@@ -58,6 +63,8 @@ appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "a
 biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 desugar = { group = "com.android.tools", name = "desugar_jdk_libs_nio", version.ref = "desugar" }
 leanback = { group = "androidx.leanback", name = "leanback", version.ref = "leanback" }
+# VLC 引擎（甲方案）。fat AAR：4 个 ABI 的 libvlc.so / libvlcjni.so / libc++_shared.so 全带。
+libvlc-all = { group = "org.videolan.android", name = "libvlc-all", version.ref = "libvlc" }
 lifecycle-service = { group = "androidx.lifecycle", name = "lifecycle-service", version.ref = "lifecycleService" }
 # fongmi 自建的 media3 fork（托管在 third_party/maven，非 Maven Central）
 media3-common = { group = "androidx.media3", name = "media3-common", version.ref = "media3" }

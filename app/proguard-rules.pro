@@ -80,3 +80,14 @@
 -keep class com.google.zxing.qrcode.QRCodeReader { *; }
 -keep class com.google.zxing.qrcode.QRCodeWriter { *; }
 -keep class com.google.zxing.qrcode.decoder.ErrorCorrectionLevel { *; }
+
+# VLC（org.videolan.android:libvlc-all）
+# AAR 里**没有** consumer proguard 规则（已解包核对：只有 R.txt / AndroidManifest.xml /
+# classes.jar / jni/ / res/，无 proguard.txt），而 libvlcjni.so 是按 Java 类名与方法名做
+# JNI 查找的（Java_org_videolan_libvlc_LibVLC_nativeNew 这类）⇒ R8 一旦改名，
+# LibVLC.nativeNew / MediaPlayer 的那些 native 方法就找不到实现，抛 UnsatisfiedLinkError。
+# 所以整体保留（连类名一起，不能只 keep 成员）。
+# ⚠ release 走 R8（minifyEnabled=true），探针阶段就已经需要这条 —— 否则探针在 release 包里
+#   会报出"加载成功但初始化失败"的假阴性，把结论带偏。
+-keep class org.videolan.** { *; }
+-dontwarn org.videolan.**

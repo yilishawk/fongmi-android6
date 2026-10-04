@@ -85,6 +85,31 @@ android {
         }
     }
 
+    // 2026-10-03：VLC（org.videolan.android:libvlc-all）与 media3-mpvplayer **各自**都随 AAR
+    // 带一份 libc++_shared.so，同名但内容不同：
+    //     armeabi-v7a   VLC 554,808 B   vs   media3 963,028 B
+    //     arm64-v8a     VLC 9,236,352 B vs   media3 1,374,336 B
+    // 两年前只有 media3 一家提供，所以一直没冲突；加了 VLC 之后 mergeNativeLibs 会直接报
+    // 重复文件而失败。
+    //
+    // ⚠ 必须选 **media3 那一份**，这不是口味问题。逐符号比对过 5 个消费者的未定义符号
+    //   （libvlc / libvlcjni / libmpv / libplayer / libavcodec，见 .gradle-user/VLC接入-门禁复验.md）：
+    //     media3 的 963,028 B   → 5 个消费者全部满足 ✅
+    //     VLC 的 554,808 B      → libmpv 缺 23 个、libplayer 缺 1 个、libavcodec 缺 3 个 ❌
+    //   （缺的是 std::to_chars/from_chars、bad_function_call vtable、iostream/filebuf vtable、
+    //     __libcpp_verbose_abort —— 都是 963,028 那份才有。）
+    //   选错 ⇒ libmpv.so 解析不了符号 ⇒ **MPV 直接全废**（不崩、静默不可用）。
+    //
+    // pickFirst 是全局打包配置，影响所有 flavor / ABI。但它只是"从两份里挑一份"，
+    // 被挑中的那份对全部 5 个消费者都够用 ⇒ 对 MPV 无影响。
+    packaging {
+        jniLibs {
+            // 用 .add(...) 而不是 += ：pickFirsts 是 Gradle 的 SetProperty<String>，
+            // add() 在 Set / SetProperty 两种类型上都成立。
+            pickFirsts.add("**/libc++_shared.so")
+        }
+    }
+
     configurations.configureEach {
         exclude group: 'stax', module: 'stax-api'
         exclude group: 'xpp3', module: 'xpp3'
@@ -152,6 +177,13 @@ dependencies {
     implementation libs.lifecycle.service
     // 从 webhtv 移植：fongmi media3 fork（third_party/maven）+ mpvplayer 扩展
     implementation libs.bundles.media3
+    // 2026-10-03 VLC 接入第 1 步（探针）：org.videolan.android:libvlc-all 是 fat AAR，
+    // 一次带 4 个 ABI 的 libvlc.so / libvlcjni.so / libc++_shared.so（v7a 合计 ≈39.3 MB）。
+    // ABI splits（buildSrc/AbiApkPackaging）只留 arm64-v8a / armeabi-v7a，x86/x86_64 会被裁掉。
+    // ⚠ 它自带的 libc++_shared.so 与 media3 的那份冲突 ⇒ 见上面 packaging 块。
+    // ⚠ 固定 3.6.3：门禁 1/2（libc++_shared.so 逐符号比对、Java 层 API 24 越界审计）
+    //    都是对着这个版本的 AAR 做的，换版本要重做。
+    implementation libs.libvlc.all
     // 2026-09-27 停用：nextlib-media3ext 是从 webhtv 一起带过来的，但 TV-fongmi 的源码
     // 对它零引用（全工程扫描：只有 build.gradle / libs.versions.toml / settings.gradle 提到名字，
     // app 与 catvod 的 .java 里一处都没有）。而它自带 jni/<abi>/{libavcodec,libavutil,
