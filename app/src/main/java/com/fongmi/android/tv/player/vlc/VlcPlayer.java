@@ -80,6 +80,22 @@ public final class VlcPlayer extends SimpleBasePlayer {
     private static final String TAG = "VlcPlayer";
 
     /**
+     * ⚠⚠ 诊断探针（临时，验完必须删）⚠⚠ —— 对应 .gradle-user 建议文档「七、增加 Session 日志」。
+     *
+     * <p>每次 {@code VlcPlayer} 实例 = 一个播放 session（VLC-001 / VLC-002 … 静态递增）。
+     * 所有 {@link VlcLog} 打点都走 {@link #logD}/{@link #logE}，自动前缀 {@code [VLC-00N]}，
+     * 让「同一次播放的 Java 侧日志」与「--verbose=2 的 native logcat（tag=VLC）里的
+     * 同一线程号」能对上 —— 见建议文档「最终目标」。
+     *
+     * <p>纯日志，零行为改动：不改任何播放 / surface / 解码路径。</p>
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger SESSION_COUNTER =
+            new java.util.concurrent.atomic.AtomicInteger(1);
+
+    /** 本实例的 session 标签（如 {@code "VLC-003"}）。 */
+    private final String session;
+
+    /**
      * 可用的 {@link Player.Command} 集合。
      *
      * <p>刻意与 mpv 侧对齐（{@code MpvAvailableCommands} 的 22 个 PERMANENT + seek 系列），
@@ -163,15 +179,36 @@ public final class VlcPlayer extends SimpleBasePlayer {
     private boolean hardwareDecode = true;
     private boolean released;
 
+    /**
+     * ⚠⚠ 诊断探针（临时，验完删）——建议文档「六/十二、修改 EndReached 判断」。
+     * 每次 loadCurrent 归零；Playing 时若 videoTrack 已 ≥0 置 true。
+     * EndReached 时据此区分「初始化失败（没建出视频就结束）」与「正常播完」。
+     */
+    private boolean sawVideoTrack = false;
+
     VlcPlayer(Looper looper, LibVLC libVlc, int decode) {
         super(looper);
+        int n = SESSION_COUNTER.getAndIncrement();
+        this.session = String.format("VLC-%03d", n);
         this.libVlc = libVlc;
         this.hardwareDecode = decode != PlayerEngine.SOFT;
         this.vlc = new org.videolan.libvlc.MediaPlayer(libVlc);
         this.vout = vlc.getVLCVout();
         this.vlc.setEventListener(this::onVlcEvent);
-        VlcLog.d("VlcPlayer created: decode=" + decode + " hwDecode=" + hardwareDecode
+        logD("VlcPlayer created: decode=" + decode + " hwDecode=" + hardwareDecode
                 + " voutImpl=" + vout.getClass().getName());
+    }
+
+    // ================================================================ Session 日志（⚠ 临时探针，验完删）
+
+    /** 前缀化 debug 打点：session 标签 + 原文，进 logcat(tag=VLC) 与 DebugLogStore。 */
+    private void logD(String message) {
+        VlcLog.d("[" + session + "] " + message);
+    }
+
+    /** 前缀化 error 打点。 */
+    private void logE(String message, Throwable cause) {
+        VlcLog.e("[" + session + "] " + message, cause);
     }
 
     // ================================================================ getState
@@ -253,12 +290,12 @@ public final class VlcPlayer extends SimpleBasePlayer {
     @Override
     protected ListenableFuture<?> handleSetPlayWhenReady(boolean playWhenReady) {
         this.playWhenReady = playWhenReady;
-        VlcLog.d("setPlayWhenReady(" + playWhenReady + ") attached=" + safeAttached() + " hasMedia=" + safeHasMedia());
+        logD("setPlayWhenReady(" + playWhenReady + ") attached=" + safeAttached() + " hasMedia=" + safeHasMedia());
         try {
             if (playWhenReady) vlc.play();
             else vlc.pause();
         } catch (Throwable e) {
-            VlcLog.e("setPlayWhenReady failed", e);
+            logE("setPlayWhenReady failed", e);
         }
         return Futures.immediateVoidFuture();
     }
@@ -272,7 +309,7 @@ public final class VlcPlayer extends SimpleBasePlayer {
         //     if (mWindow.areSurfacesWaiting()) return;   // 不调 nativePlay()
         //   ⇒ 若此刻 surface 处于「已 attach 但未就绪」，play() 只会置 mPlayRequested 就返回。
         //   所以这里必须记下 attached —— 它是判「只有声音」的关键前置。
-        VlcLog.d("prepare: attached=" + safeAttached() + " hasMedia=" + safeHasMedia()
+        logD("prepare: attached=" + safeAttached() + " hasMedia=" + safeHasMedia()
                 + " playlist=" + playlist.size());
         try {
             if (!playlist.isEmpty()) {
@@ -281,7 +318,7 @@ public final class VlcPlayer extends SimpleBasePlayer {
                 vlc.play();
             }
         } catch (Throwable e) {
-            VlcLog.e("prepare failed", e);
+            logE("prepare failed", e);
         }
         return Futures.immediateVoidFuture();
     }
@@ -306,6 +343,19 @@ public final class VlcPlayer extends SimpleBasePlayer {
     private int safeVideoTrack() {
         try {
             return vlc.getVideoTrack();
+        } catch (Throwable e) {
+            return -1;
+        }
+    }
+
+    /**
+     * ⚠ 诊断探针（验完删）—— 建议文档「八、持续记录 Vout」。
+     * 从当前 videoTracks 数里估一个 vout 参考量（视频轨存在性）；
+     * 精确的 voutCount 以 Vout 事件为准，这里只作 EndReached 时的旁证。
+     */
+    private int safeVoutCount() {
+        try {
+            return countOf(vlc.getVideoTracks());
         } catch (Throwable e) {
             return -1;
         }
@@ -502,18 +552,22 @@ public final class VlcPlayer extends SimpleBasePlayer {
         releaseMedia();
         resetPlaybackState();
         pendingStartPositionMs = startPositionMs;
+        sawVideoTrack = false;
         if (currentIndex == C.INDEX_UNSET || currentIndex >= playlist.size()) {
-            VlcLog.d("loadCurrent: no current item (index=" + currentIndex + ", size=" + playlist.size() + ")");
+            logD("loadCurrent: no current item (index=" + currentIndex + ", size=" + playlist.size() + ")");
             return;
         }
         MediaItem item = playlist.get(currentIndex);
         Uri uri = item.localConfiguration != null ? item.localConfiguration.uri : null;
         if (uri == null) {
-            VlcLog.e("loadCurrent: media item has no uri");
+            logE("loadCurrent: media item has no uri", null);
             return;
         }
         try {
             Media media = new Media(libVlc, uri);
+            // ⚠ 诊断探针（验完删）：建议文档「二、Header 是否真正传给 LibVLC」——
+            //   只打 header 的**键集合**，不打 Cookie/Token/Authorization 的值（文档明确禁止）。
+            logD("loadCurrent: headers=" + headerKeySummary(item) + " hwDecode=" + hardwareDecode);
             applyHeaders(media, item);
             media.setHWDecoderEnabled(hardwareDecode, false);
             media.setDefaultMediaPlayerOptions();
@@ -521,10 +575,10 @@ public final class VlcPlayer extends SimpleBasePlayer {
             // setMedia 内部 retain 了一次，这里放掉自己那份引用（否则 native 侧泄漏）。
             media.release();
             playbackState = Player.STATE_BUFFERING;
-            VlcLog.d("loadCurrent: setMedia OK uri=" + uri + " hwDecode=" + hardwareDecode);
+            logD("loadCurrent: setMedia OK uri=" + uri + " hwDecode=" + hardwareDecode);
             invalidateState();
         } catch (Throwable e) {
-            VlcLog.e("loadCurrent: setMedia FAILED uri=" + uri, e);
+            logE("loadCurrent: setMedia FAILED uri=" + uri, e);
             playerError = error("VLC 无法打开媒体：" + uri, e, PlaybackException.ERROR_CODE_IO_UNSPECIFIED);
             playbackState = Player.STATE_IDLE;
             invalidateState();
@@ -549,6 +603,16 @@ public final class VlcPlayer extends SimpleBasePlayer {
         }
     }
 
+    /**
+     * ⚠ 诊断探针（验完删）—— 建议文档「二、调试时打印 header」。
+     * 只列 header 的**键**与数量，**绝不**打印 Cookie / Token / Authorization 的值。
+     */
+    private static String headerKeySummary(MediaItem item) {
+        Bundle extras = item.requestMetadata.extras;
+        if (extras == null || extras.isEmpty()) return "[none]";
+        return "keys=" + extras.keySet();
+    }
+
     // ================================================================ Surface 握手
 
     /**
@@ -567,7 +631,7 @@ public final class VlcPlayer extends SimpleBasePlayer {
         // 幂等：同一个对象且已 attach ⇒ 什么都不做。
         // ⚠ 不能省这一步 —— 见下面 ensureInitState 的说明，重复走一遍会 detach/attach 闪一下。
         if (videoOutput == this.videoOutput && vout.areViewsAttached()) {
-            VlcLog.d("setVideoOutput: same " + typeName(videoOutput) + ", already attached -> skip");
+            logD("setVideoOutput: same " + typeName(videoOutput) + ", already attached -> skip");
             return Futures.immediateVoidFuture();
         }
         try {
@@ -582,16 +646,16 @@ public final class VlcPlayer extends SimpleBasePlayer {
             // detachViews() 会把 mSurfacesState 归 0 并 release 各 helper，之后才允许重新 setVideoView。
             boolean wasAttached = vout.areViewsAttached();
             if (wasAttached) {
-                VlcLog.d("setVideoOutput: was attached -> detachViews() first");
+                logD("setVideoOutput: was attached -> detachViews() first");
                 vout.detachViews();
             }
             this.videoOutput = videoOutput;
             if (!bindVideoOutput(videoOutput)) return Futures.immediateVoidFuture();
             vout.attachViews();
-            VlcLog.d("setVideoOutput: bound " + typeName(videoOutput)
+            logD("setVideoOutput: bound " + typeName(videoOutput)
                     + " wasAttached=" + wasAttached + " nowAttached=" + vout.areViewsAttached());
         } catch (Throwable e) {
-            VlcLog.e("setVideoOutput FAILED for " + typeName(videoOutput), e);
+            logE("setVideoOutput FAILED for " + typeName(videoOutput), e);
         }
         return Futures.immediateVoidFuture();
     }
@@ -631,7 +695,7 @@ public final class VlcPlayer extends SimpleBasePlayer {
             vout.setVideoSurface(texture);
             return true;
         }
-        VlcLog.e("setVideoOutput: unsupported type " + videoOutput.getClass().getName());
+        logE("setVideoOutput: unsupported type " + videoOutput.getClass().getName(), null);
         return false;
     }
 
@@ -650,10 +714,10 @@ public final class VlcPlayer extends SimpleBasePlayer {
         try {
             if (vout.areViewsAttached()) {
                 vout.detachViews();
-                VlcLog.d("clearVideoOutput: detached (" + typeName(videoOutput) + ")");
+                logD("clearVideoOutput: detached (" + typeName(videoOutput) + ")");
             }
         } catch (Throwable e) {
-            VlcLog.e("detach video output failed", e);
+            logE("detach video output failed", e);
         }
         return Futures.immediateVoidFuture();
     }
@@ -759,7 +823,7 @@ public final class VlcPlayer extends SimpleBasePlayer {
         switch (event.type) {
             case org.videolan.libvlc.MediaPlayer.Event.Opening -> {
                 playbackState = Player.STATE_BUFFERING;
-                VlcLog.d("event Opening");
+                logD("event Opening");
             }
             case org.videolan.libvlc.MediaPlayer.Event.Buffering -> {
                 if (event.getBuffering() >= 100f && playbackState == Player.STATE_BUFFERING) playbackState = Player.STATE_READY;
@@ -768,7 +832,8 @@ public final class VlcPlayer extends SimpleBasePlayer {
                 playbackState = Player.STATE_READY;
                 seekable = vlc.isSeekable();
                 // ⭐ 取证：Playing 时若 attached=false / videoTrack=-1，就是「只有声音」的直接证据。
-                VlcLog.d("event Playing: attached=" + safeAttached()
+                if (safeVideoTrack() >= 0) sawVideoTrack = true;
+                logD("event Playing: attached=" + safeAttached()
                         + " videoTrack=" + safeVideoTrack()
                         + " voutCount=" + event.getVoutCount());
                 applyPendingStartPosition();
@@ -777,18 +842,26 @@ public final class VlcPlayer extends SimpleBasePlayer {
             case org.videolan.libvlc.MediaPlayer.Event.Stopped -> {
                 playbackState = Player.STATE_IDLE;
                 playWhenReady = false;
-                VlcLog.d("event Stopped");
+                logD("event Stopped");
             }
             case org.videolan.libvlc.MediaPlayer.Event.EndReached -> {
                 playbackState = Player.STATE_ENDED;
                 positionMs = durationMs == C.TIME_UNSET ? positionMs : durationMs;
-                VlcLog.d("event EndReached");
+                // ⚠ 诊断探针（验完删）：建议文档「六/十二、修改 EndReached 判断」——
+                //   区分「初始化失败（没建出视频就 EndReached）」与「正常播完」。
+                if (!sawVideoTrack) {
+                    logE("event EndReached ⇒ PLAYBACK_INIT_FAILED（全程 videoTrack 未 ≥0；"
+                            + "duration=" + durationMs + " voutCount=" + safeVoutCount()
+                            + " attached=" + safeAttached() + "）", null);
+                } else {
+                    logD("event EndReached（正常：videoTrack 曾 ≥0）");
+                }
             }
             case org.videolan.libvlc.MediaPlayer.Event.EncounteredError -> {
                 playbackState = Player.STATE_IDLE;
                 playWhenReady = false;
                 playerError = error("VLC 播放失败（EncounteredError）", null, PlaybackException.ERROR_CODE_IO_UNSPECIFIED);
-                VlcLog.e("event EncounteredError: attached=" + safeAttached() + " hasMedia=" + safeHasMedia());
+                logE("event EncounteredError: attached=" + safeAttached() + " hasMedia=" + safeHasMedia(), null);
             }
             case org.videolan.libvlc.MediaPlayer.Event.TimeChanged -> {
                 positionMs = event.getTimeChanged();
@@ -797,20 +870,20 @@ public final class VlcPlayer extends SimpleBasePlayer {
             case org.videolan.libvlc.MediaPlayer.Event.LengthChanged -> {
                 durationMs = event.getLengthChanged();
                 seekable = vlc.isSeekable();
-                VlcLog.d("event LengthChanged: duration=" + durationMs + " seekable=" + seekable);
+                logD("event LengthChanged: duration=" + durationMs + " seekable=" + seekable);
             }
             case org.videolan.libvlc.MediaPlayer.Event.SeekableChanged -> seekable = event.getSeekable();
             case org.videolan.libvlc.MediaPlayer.Event.Vout -> {
                 // ⭐⭐ 最关键的一条取证：voutCount 是 VLC **真的建出视频输出窗口**的计数。
                 //    全程 voutCount==0 而 Playing 已到 ⇒ 「只有声音」成立，且不在我方 media3 适配层。
-                VlcLog.d("event Vout: count=" + event.getVoutCount() + " attached=" + safeAttached());
+                logD("event Vout: count=" + event.getVoutCount() + " attached=" + safeAttached());
                 if (event.getVoutCount() > 0) refreshVideoSize();
             }
             case org.videolan.libvlc.MediaPlayer.Event.ESAdded,
                  org.videolan.libvlc.MediaPlayer.Event.ESDeleted,
                  org.videolan.libvlc.MediaPlayer.Event.ESSelected -> {
                 refreshTracks();
-                VlcLog.d("event ES type=" + event.getEsChangedType() + " id=" + event.getEsChangedID()
+                logD("event ES type=" + event.getEsChangedType() + " id=" + event.getEsChangedID()
                         + " tracks v/a/s=" + countOf(vlc.getVideoTracks()) + "/" + countOf(vlc.getAudioTracks()) + "/" + countOf(vlc.getSpuTracks())
                         + " videoTrack=" + safeVideoTrack());
             }
@@ -847,12 +920,12 @@ public final class VlcPlayer extends SimpleBasePlayer {
                 IMedia.Track track = media.getTrack(i);
                 if (track instanceof IMedia.VideoTrack video && video.id == current && video.width > 0 && video.height > 0) {
                     videoSize = new VideoSize(video.width, video.height);
-                    VlcLog.d("videoSize=" + video.width + "x" + video.height + " (track " + current + ")");
+                    logD("videoSize=" + video.width + "x" + video.height + " (track " + current + ")");
                     return;
                 }
             }
         } catch (Throwable e) {
-            VlcLog.e("refreshVideoSize failed", e);
+            logE("refreshVideoSize failed", e);
         }
     }
 
@@ -927,7 +1000,7 @@ public final class VlcPlayer extends SimpleBasePlayer {
     private void releaseInternal() {
         if (released) return;
         released = true;
-        VlcLog.d("release: attached=" + safeAttached() + " hasMedia=" + safeHasMedia());
+        logD("release: attached=" + safeAttached() + " hasMedia=" + safeHasMedia());
         try {
             vlc.setEventListener(null);
         } catch (Throwable ignored) {
