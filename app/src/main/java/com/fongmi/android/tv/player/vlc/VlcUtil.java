@@ -100,13 +100,27 @@ public final class VlcUtil {
             //   也就是说这个探针要么给出 debug 日志，要么明确告诉你它没生效，不会静默。
             options.add("--verbose=2");
 
-            // ⚠ 探针 4（574）`--vout=android_display` 已于 2026-10-05 判读为**实验作废**并回退，勿再启用：
-            //   `.so` 里有 `android_display` 字符串 ≠ 它运行时可被 `--vout` 选中。
-            //   实测 `looking for vout display module matching "android_display": 5 candidates`
-            //   → `no vout display modules matched` ×559 ⇒ **vout 从未建立**（`event Vout: count=0`）。
-            //   ⭐ 候选池计数**不随请求名变化**（"any"→5，也是 5）⇒ 5 是 capability 池大小，
-            //   该模块**不在池里**；且日志**无法区分**「没注册」vs「注册了但 Open 失败」。
-            //   完整判读：`.gradle-user/2026-10-05-探针4-574判读.md`。
+            // ⚠ 探针 5（576）：`--vout=android-display`（**连字符**）。
+            //
+            // 【为什么是 574 作废后的重做】574 写的是 `android_display`（**下划线**），名字对不上 ⇒ 作废。
+            //   根因（VLC 3.0.21 `src/modules/modules.c` 的 `module_match_name()` 原文）：
+            //     匹配**只遍历 `m->pp_shortcuts[i]`**（模块内部名 `psz_name`/`psz_shortname` 完全不参与），
+            //     `strcasecmp` ⇒ 大小写不敏感，但 **`-`（连字符）与 `_`（下划线）不等价**；
+            //     且 vout 以 strict=true 请求 ⇒ 不匹配即返回 NULL、**不回退**。
+            //   该模块源码 `modules/video_output/android/display.c` 声明 `add_shortcut("android-display")`。
+            //   ⭐ 574 日志里的 `5 candidates` 恰恰说明 capability 池里**有**它，只是名字对不上；
+            //   ⭐ 574 用到的 `android_display` 是 `.so` 里的**描述串**（紧邻 "Android video output"），
+            //     **不参与 `--vout` 匹配** —— 原注释「该模块不在池里」的判读**是错的，已修正**。
+            //
+            // 【本次意图】切到**非 GL** 的 android-display 路径（源码注释自称是 gles2 失败时的回退），
+            //   其 `OpenCommon()` **同时处理 `VLC_CODEC_ANDROID_OPAQUE`**（`OpenOpaque` 也调它）
+            //   ⇒ 支持硬解 opaque 直通 ⇒ **若断点确在 gles2/EGL，这条路径可能绕过并出画**。
+            //
+            // 【判据】日志出现 `using vout display module "android-display"` ⇒ 选中成功；
+            //   若仍 `no vout display modules matched` ⇒ 这次才是真的不可用（回退该行）。
+            // 【回退】删掉下面这一行。
+            // 【依据】`.gradle-user/2026-10-05-574判读修正-android-display拼写.md`
+            options.add("--vout=android-display");
 
             LibVLC libVlc = new LibVLC(context.getApplicationContext(), options);
             VlcLog.d("new LibVLC OK: version=" + LibVLC.version() + " options=" + options);
