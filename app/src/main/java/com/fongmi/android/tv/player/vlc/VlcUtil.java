@@ -100,20 +100,33 @@ public final class VlcUtil {
             //   也就是说这个探针要么给出 debug 日志，要么明确告诉你它没生效，不会静默。
             options.add("--verbose=2");
 
-            // ⚠⚠ 诊断探针 2（临时，验完必须删）⚠⚠
-            // 目的：把 MediaCodec 的输出从 **opaque buffer（直通 Surface）** 改成普通 buffer，
-            //   从而绕开 glconv_android（MediaCodec surface → GL 纹理）这一层。
-            //   用来判定 lzm3u8「有声无画」的断点在 glconv_android，还是在 gles2 → AWindow。
+            // ⚠⚠ 诊断探针 3（临时，验完必须删）⚠⚠
+            // 目的：强制用 **非 GL 的 vout display 模块**（android_display），
+            //   一刀切开「GL 渲染层」与「window/Surface 交付层」。
             //
-            // 依据（从本 AAR 的 libvlc.so 里读出的选项帮助文本，不是记忆）：
-            //   "mediacodec"     → "Video decoder using Android MediaCodec via NDK"
-            //   "mediacodec-dr"  → "Android direct rendering"
-            //                      "Enable Android direct rendering using opaque buffers."
-            // ⇒ 默认开启；--no-mediacodec-dr 关闭 ⇒ 输出不再走 opaque
-            //   （对应 §35 日志里 video output 的 "4cc ANOP"）。
+            // 依据一（--vout 的作用，从本 AAR 的 libvlc.so 里读出的选项帮助原文，不是记忆）：
+            //   "auto"                  → "Video output module"
+            //   "This is the the video output method used by VLC. The default behavior is
+            //    to automatically select the best method available."
+            //   ⇒ 默认 auto 会选 gles2；这里改成显式指定模块名。
             //
-            // 自证性：若选项被拒，日志会出现 "Unknown option '%s'"（error 级），不会静默。
-            options.add("--no-mediacodec-dr");
+            // 依据二（模块确实存在，从同一个 .so 里读出的模块描述串）：
+            //   "android_display" → "Android video output"
+            //   同一处还跟着 "android-display" / "Chroma used" /
+            //   "Force use of a specific chroma for output. Default is RGB32."
+            //   （另：android_surface **不存在**）
+            //
+            // 为什么是这一刀（§38 的结论）：
+            //   572 硬解 mediacodec → 4cc ANOP → glconv_android → gles2 → 不出画
+            //   573 软解 avcodec    → 4cc I420 →（无 glconv）  → gles2 → 不出画
+            //   两条不同的解码/格式路径都走 gles2 都不出画
+            //   ⇒ 断点在公共层 android_window / egl_android / gles2 / AWindow。
+            //   换掉 gles2 这一层，就能判定断点是不是在 GL。
+            //
+            // 自证性：若模块名被拒或模块打不开，日志会出现
+            //   "no vout display modules matched" 之类的 error 行，不会静默；
+            //   若选项名被拒，会出现 "Unknown option '%s'"（error 级）。
+            options.add("--vout=android_display");
 
             LibVLC libVlc = new LibVLC(context.getApplicationContext(), options);
             VlcLog.d("new LibVLC OK: version=" + LibVLC.version() + " options=" + options);
