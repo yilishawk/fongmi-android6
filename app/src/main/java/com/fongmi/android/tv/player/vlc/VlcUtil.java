@@ -100,6 +100,21 @@ public final class VlcUtil {
             //   也就是说这个探针要么给出 debug 日志，要么明确告诉你它没生效，不会静默。
             options.add("--verbose=2");
 
+            // ⚠⚠ 诊断探针 2（临时，验完必须删）⚠⚠
+            // 目的：把 MediaCodec 的输出从 **opaque buffer（直通 Surface）** 改成普通 buffer，
+            //   从而绕开 glconv_android（MediaCodec surface → GL 纹理）这一层。
+            //   用来判定 lzm3u8「有声无画」的断点在 glconv_android，还是在 gles2 → AWindow。
+            //
+            // 依据（从本 AAR 的 libvlc.so 里读出的选项帮助文本，不是记忆）：
+            //   "mediacodec"     → "Video decoder using Android MediaCodec via NDK"
+            //   "mediacodec-dr"  → "Android direct rendering"
+            //                      "Enable Android direct rendering using opaque buffers."
+            // ⇒ 默认开启；--no-mediacodec-dr 关闭 ⇒ 输出不再走 opaque
+            //   （对应 §35 日志里 video output 的 "4cc ANOP"）。
+            //
+            // 自证性：若选项被拒，日志会出现 "Unknown option '%s'"（error 级），不会静默。
+            options.add("--no-mediacodec-dr");
+
             LibVLC libVlc = new LibVLC(context.getApplicationContext(), options);
             VlcLog.d("new LibVLC OK: version=" + LibVLC.version() + " options=" + options);
             return libVlc;
