@@ -100,33 +100,13 @@ public final class VlcUtil {
             //   也就是说这个探针要么给出 debug 日志，要么明确告诉你它没生效，不会静默。
             options.add("--verbose=2");
 
-            // ⚠⚠ 诊断探针 3（临时，验完必须删）⚠⚠
-            // 目的：强制用 **非 GL 的 vout display 模块**（android_display），
-            //   一刀切开「GL 渲染层」与「window/Surface 交付层」。
-            //
-            // 依据一（--vout 的作用，从本 AAR 的 libvlc.so 里读出的选项帮助原文，不是记忆）：
-            //   "auto"                  → "Video output module"
-            //   "This is the the video output method used by VLC. The default behavior is
-            //    to automatically select the best method available."
-            //   ⇒ 默认 auto 会选 gles2；这里改成显式指定模块名。
-            //
-            // 依据二（模块确实存在，从同一个 .so 里读出的模块描述串）：
-            //   "android_display" → "Android video output"
-            //   同一处还跟着 "android-display" / "Chroma used" /
-            //   "Force use of a specific chroma for output. Default is RGB32."
-            //   （另：android_surface **不存在**）
-            //
-            // 为什么是这一刀（§38 的结论）：
-            //   572 硬解 mediacodec → 4cc ANOP → glconv_android → gles2 → 不出画
-            //   573 软解 avcodec    → 4cc I420 →（无 glconv）  → gles2 → 不出画
-            //   两条不同的解码/格式路径都走 gles2 都不出画
-            //   ⇒ 断点在公共层 android_window / egl_android / gles2 / AWindow。
-            //   换掉 gles2 这一层，就能判定断点是不是在 GL。
-            //
-            // 自证性：若模块名被拒或模块打不开，日志会出现
-            //   "no vout display modules matched" 之类的 error 行，不会静默；
-            //   若选项名被拒，会出现 "Unknown option '%s'"（error 级）。
-            options.add("--vout=android_display");
+            // ⚠ 探针 4（574）`--vout=android_display` 已于 2026-10-05 判读为**实验作废**并回退，勿再启用：
+            //   `.so` 里有 `android_display` 字符串 ≠ 它运行时可被 `--vout` 选中。
+            //   实测 `looking for vout display module matching "android_display": 5 candidates`
+            //   → `no vout display modules matched` ×559 ⇒ **vout 从未建立**（`event Vout: count=0`）。
+            //   ⭐ 候选池计数**不随请求名变化**（"any"→5，也是 5）⇒ 5 是 capability 池大小，
+            //   该模块**不在池里**；且日志**无法区分**「没注册」vs「注册了但 Open 失败」。
+            //   完整判读：`.gradle-user/2026-10-05-探针4-574判读.md`。
 
             LibVLC libVlc = new LibVLC(context.getApplicationContext(), options);
             VlcLog.d("new LibVLC OK: version=" + LibVLC.version() + " options=" + options);
