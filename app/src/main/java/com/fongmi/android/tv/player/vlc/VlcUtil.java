@@ -115,6 +115,25 @@ public final class VlcUtil {
             //     ⇒ **指定一个不存在的 `--vout` 名，比不指定更糟。**
             //   判读全文：`.gradle-user/2026-10-06-576判读-android-display不可选.md`
 
+            // ⭐⭐⭐ 探针 6（578）`--vout=android-opaque` —— 2026-10-06 10:40 凯哥批准（唯一变量）。
+            //
+            // 依据（`.so` 取证）：libvlc.so 里有**两个** Android 视频输出模块的描述串 ——
+            //     "Android video output"        （旁有短名串 `ANW`）
+            //     "Android opaque video output" （shortcut 串 `android-opaque`）
+            //   `android_display`（`android-display`）已被 574/576 **实测**证明不在运行时候选池；
+            //   但 **`android-opaque` 是另一个模块，从未试过**。
+            //
+            // ⚠ 影响面（与 576 同型风险）：若它同样不在候选池，`vlc_module_load(strict=true)`
+            //   **不回退** ⇒ 会退化成 `no vout display modules matched` + `event Vout: count=0`。
+            //   但用户可见表现与现状一致（本来就黑），且**判据一眼可辨**：
+            //     ✅ 可选 ⇒ `using vout display module "android-opaque"`（走直通路径，与 EXO 同类）
+            //     ❌ 不可选 ⇒ `looking for vout display module matching "android-opaque": 5 candidates`
+            //                 + `no vout display modules matched`
+            //   ⚠ 二者之间还有第三种可能：已注册但 `Open` 失败 —— 该情形本日志**无法区分**。
+            //
+            // 回退：删掉本行即回到 577 状态（`gles2`），无其它耦合。
+            options.add("--vout=android-opaque");
+
             // ⭐⭐ 577 的**真正发现**（不是 vout，是**解码器**）—— 来自 576 的 `VLC-std`：
             //   looking for video decoder module matching "mediacodec_ndk,all": 14 candidates
             //   W VLC: Exception occurred in MediaCodecInfo.getCapabilitiesForType   ← 硬解能力识别失败

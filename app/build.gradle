@@ -37,7 +37,11 @@ android {
         // App 内"检查更新"是拿远端 JSON 的 code 与 BuildConfig.VERSION_CODE 比大小，相等即判定"无需更新"。
         // 不抬的话 CI 产出的 dist/<flavor>.json 里 code 与已装包相同 ⇒ 比较恒为 false ⇒
         // 更新提示永不弹出（每次发版都必须递增）。
-        versionCode 577
+        // → 577（2026-10-06，回退 `--vout=android-display`（574/576 两轮实测均不可选），
+        //    改为解码器自检日志）：
+        // → 578（2026-10-06，探针 6：`--vout=android-opaque` —— 唯一变量，测 `.so` 里另一个
+        //    Android 视频输出模块 `android-opaque` 是否可选；失败即删该行回到 577）：
+        versionCode 578
         versionName "5.6.3"
         externalNativeBuild {
             cmake {
