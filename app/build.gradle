@@ -54,7 +54,16 @@ android {
         //    VLC 退到 `gles2` ⇒ 黑屏。唯一变量 = vout 路径；同时删掉 580 的三行探针（已证无效）
         //    回到 577 选项基线。回退 = 改回无参 `attachViews()`。
         //    判读全文：`.gradle-user/2026-10-06-根因定案-android-display门禁.md`
-        versionCode 581
+        // → 582（2026-10-06，**探针 9**）：`--vout=android-opaque,gles2`。
+        //    581 真机判读（`.gradle-user/2026-10-06-581真机判读-第二道门禁.md`）证明 listener 修复
+        //    **生效**（首次出现 `using opaque`，A/B：572/575/577 均为 0 次），但撞上**第二道门禁**：
+        //    `android_opaque` 要求 app 提供**字幕 surface**，我们只有一个 ⇒
+        //    `can't get Subtitles Surface` ⇒ `cannot blend subtitles with an opaque surface,
+        //    trying next vout` ⇒ 让位 `gles2` ⇒ 仍黑。
+        //    唯一变量 = 用 `--vout=` 把 `obj.force` 置 true（`core_modules.c:270`），从而跳过第二道门禁。
+        //    ⚠ 探针代价：字幕失效（opaque 本来就混不了字幕）。**成功后须做「补字幕 surface」的根因修复。**
+        //    ⚠ 发版必须 `-f release_tag=<名> -f prerelease=true`，不得顶掉 `releases/latest`。
+        versionCode 582
         versionName "5.6.3"
         externalNativeBuild {
             cmake {

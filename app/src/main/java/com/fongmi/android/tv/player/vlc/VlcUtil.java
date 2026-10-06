@@ -174,6 +174,41 @@ public final class VlcUtil {
             // 回退：本块无 active 选项；options 现在只剩 `--verbose=2`（+ LibVLC 自动追加的
             //       `--aout=*` 与 `--android-display-chroma RV16`），即 577 的选项基线。
 
+            // ⭐⭐⭐⭐⭐ 探针 9（582）`--vout=android-opaque,gles2` —— **门禁①修复后的重试**。
+            //
+            // 前提已经变了：581 注册了 `IVLCVout.OnNewVideoLayoutListener`，真机日志
+            // （`.gradle-user/live581.txt`）**首次**出现 `using opaque` ⇒ `display.c:667` 的门禁①已打开。
+            // 此时暴露出**第二道、完全独立的门禁**（`display.c:750`）：
+            //     E  can't get Subtitles Surface
+            //     W  cannot blend subtitles with an opaque surface, trying next vout   → 让位 gles2 → 仍黑
+            //   原因：`android_opaque` 要求 app 提供**字幕 surface**（`AWindow_Subtitles`），
+            //   而我们全项目只给了一个 surface。VLC 官方 App 的 `VLCVideoLayout` 是**两个 SurfaceView**。
+            //
+            // 本探针的原理（源码实证，不是推测）：
+            //   `src/video_output/display.c:109`  module_need(vd, "vout display", module, module && *module != '\0')
+            //   `src/modules/modules.c:270`       obj->obj.force = strict && strcasecmp("any", shortcut);
+            //   ⇒ 写 `--vout=<名>` ⇒ strict=true ⇒ **obj.force=true**
+            //   ⇒ `display.c:750` 的 `!vd->obj.force` 为假 ⇒ **`goto error` 被跳过** ⇒ OpenCommon 成功。
+            //   ⇒ 这也解释了 574/576/578 写 `--vout=` 全失败：**当时门禁①还关着**（静默返回），
+            //     与「模块名不对 / 不在候选池」无关（旧结论已作废）。
+            //
+            // 为什么带 `,gles2` 兜底（`vlc_module_load` 支持逗号分隔 shortcut 列表，按序尝试）：
+            //   ① `gles2`（score 265）**不检查 `obj.force`** —— 已取
+            //      `modules/video_output/opengl/display.c`（VLC 3.0.21）实证，全文无 force 判断
+            //      （`add_shortcut("opengles2","gles2")`，`set_capability("vout display", 265)`）
+            //      ⇒ 兜底不会因 force 而变坏。
+            //   ② 万一 `OpenOpaque` 仍失败，行为退回 581（黑但播放正常），**不比现状更差**。
+            //   ③ 判据**不依赖画面**：日志里 `using opaque` vs `using vout display module "gles2"` 可区分。
+            //   ⚠ 顺带确认分数序：`android_opaque` 280 > `opengl` 270 > **`gles2` 265** >
+            //     `android_display` 260 ⇒ `android-display` 是**最后兜底**
+            //     （源码注释：`/* At this point, gles2 vout failed (old Android device) */`），
+            //     所以**唯一可行的原生路径就是 `android_opaque`**。
+            //
+            // ⚠ 代价（凯哥已拍板）：`obj.force` 跳过字幕检查 ⇒ **字幕失效**。
+            //   这是**判定性实验**，不是最终方案；成功后必须做「补字幕 surface」的根因修复（乙）。
+            // 回退：删本行 ⇒ 回到 581 的选项基线（仅 `--verbose=2`）。
+            options.add("--vout=android-opaque,gles2");
+
             // ⭐⭐ 577 的**真正发现**（不是 vout，是**解码器**）—— 来自 576 的 `VLC-std`：
             //   looking for video decoder module matching "mediacodec_ndk,all": 14 candidates
             //   W VLC: Exception occurred in MediaCodecInfo.getCapabilitiesForType   ← 硬解能力识别失败
