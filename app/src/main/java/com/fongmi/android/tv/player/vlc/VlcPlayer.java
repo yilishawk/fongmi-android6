@@ -199,6 +199,32 @@ public final class VlcPlayer extends SimpleBasePlayer {
     private long textOffsetMs;
     private VideoSize videoSize = VideoSize.UNKNOWN;
     private Tracks tracks = Tracks.EMPTY;
+
+    /**
+     * ⭐⭐⭐⭐⭐ media3 契约：{@code SimpleBasePlayer} **只在本标志为 true 时**才派发
+     * {@code Player.EVENT_RENDERED_FIRST_FRAME}，{@code PlayerView.onRenderedFirstFrame()}
+     * 才把 {@code exo_shutter}（纯黑、{@code match_parent}、XML 里没写 visibility ⇒ 默认
+     * VISIBLE）设成 {@code INVISIBLE} —— <b>这是那层幕布唯一的揭开点</b>
+     * （{@code PlayerView.java} 里 {@code shutterView.setVisibility(INVISIBLE)} 全类仅此一处）。
+     *
+     * <p>⚠⚠ 缺了这一步，VLC 的画面<b>永远被黑幕盖住</b>：有声音、零像素、连花屏/绿屏/一闪
+     * 都不会出现（渲染其实成功了，只是被遮住）。对照：mpv 引擎有
+     * （{@code MpvVideoState.consumeFirstFrameEvent()} → {@code MpvStateBuilder} →
+     * {@code setNewlyRenderedFirstFrame}），EXO 由 {@code ExoPlayer} 内部自派发，
+     * <b>只有我们这条 VLC 适配层漏了</b>。完整证据链见
+     * {@code .gradle-user/2026-10-06-根因定案-media3黑幕未揭开.md}。</p>
+     *
+     * <p>置位点 = {@link #refreshVideoSize()} 成功拿到尺寸处（前提是
+     * {@code event Vout: count>0} 且轨道尺寸 > 0，是 VLC 侧最接近「有帧可显示」的可观测信号）。</p>
+     *
+     * <p>⚠ 必须<b>消费式</b>（只 true 一次）：{@code SimpleBasePlayer.State.Builder}
+     * {@code #setNewlyRenderedFirstFrame} 的 javadoc 原文要求
+     * 「should only be set for the first State update after the first frame was rendered」。</p>
+     */
+    private boolean pendingFirstFrame = false;
+
+    /** 本段媒体是否已经上报过首帧（避免一次播放里 {@code event Vout} 多次触发重复上报）。 */
+    private boolean firstFrameReported = false;
     private boolean seekable;
     private long durationMs = C.TIME_UNSET;
     private long positionMs;
@@ -264,6 +290,12 @@ public final class VlcPlayer extends SimpleBasePlayer {
                 .setAudioOffsetMs(audioOffsetMs)
                 .setTextOffsetMs(textOffsetMs)
                 .setVideoSize(videoSize)
+                // ⭐⭐⭐⭐⭐ 必须由我们自己上报（消费式，只 true 一次）：
+                //   media3 只在本标志为 true 时派发 Player.EVENT_RENDERED_FIRST_FRAME，
+                //   PlayerView.onRenderedFirstFrame() 才把 exo_shutter 黑幕设成 INVISIBLE。
+                //   缺这一行 ⇒ 有声音、零像素、连一闪都没有（画面其实渲染成功了，被盖住）。
+                //   与 mpv 的 MpvVideoState.consumeFirstFrameEvent() 同构。
+                .setNewlyRenderedFirstFrame(consumeFirstFrame())
                 .setPlaylist(buildPlaylistData())
                 .setCurrentMediaItemIndex(index);
 
@@ -958,6 +990,15 @@ public final class VlcPlayer extends SimpleBasePlayer {
                 IMedia.Track track = media.getTrack(i);
                 if (track instanceof IMedia.VideoTrack video && video.id == current && video.width > 0 && video.height > 0) {
                     videoSize = new VideoSize(video.width, video.height);
+                    // ⭐⭐⭐⭐⭐ 首次拿到有效尺寸 ⇒ 置「待上报首帧」。
+                    //   本函数只在 `event Vout: count > 0` 时被调用（见 handleEvent），所以能走到
+                    //   这里就意味着 vout 已建立、轨道尺寸已知 —— VLC 侧最接近「有帧可显示」的信号。
+                    //   事件处理末尾的 invalidateState() 会重建 State，getState() 消费本标志并派发
+                    //   EVENT_RENDERED_FIRST_FRAME ⇒ PlayerView 揭开 exo_shutter 黑幕。
+                    if (!firstFrameReported) {
+                        pendingFirstFrame = true;
+                        logD("firstFrame pending -> will report to media3 (unveil exo_shutter)");
+                    }
                     logD("videoSize=" + video.width + "x" + video.height + " (track " + current + ")");
                     return;
                 }
@@ -965,6 +1006,26 @@ public final class VlcPlayer extends SimpleBasePlayer {
         } catch (Throwable e) {
             logE("refreshVideoSize failed", e);
         }
+    }
+
+    /**
+     * 消费式读取「待上报首帧」标志，只返回一次 true。
+     *
+     * <p>满足 media3 的 {@code State.Builder#setNewlyRenderedFirstFrame} 契约（javadoc：只应在
+     * 首帧渲染后的<b>第一次</b> State 更新里置位）；{@code SimpleBasePlayer} 内部同样会在
+     * {@code updateStateAndInformListeners()} 里把这个一次性标志 clear 掉。</p>
+     *
+     * <p>与 mpv 引擎的 {@code MpvVideoState.consumeFirstFrameEvent()} 同构 —— 同样是在
+     * {@code getState()} 里调用并消费。</p>
+     */
+    private boolean consumeFirstFrame() {
+        boolean pending = pendingFirstFrame;
+        pendingFirstFrame = false;
+        if (pending) {
+            firstFrameReported = true;
+            logD("firstFrame reported to media3 -> exo_shutter will be unveiled");
+        }
+        return pending;
     }
 
     /**
@@ -1025,6 +1086,10 @@ public final class VlcPlayer extends SimpleBasePlayer {
         seekable = false;
         tracks = Tracks.EMPTY;
         videoSize = VideoSize.UNKNOWN;
+        // ⭐ 换媒体 / 重播 ⇒ 首帧要重新上报。否则新一段媒体永远等不到 exo_shutter 被揭开
+        //   （黑幕只在收到 onRenderedFirstFrame 时揭开一次，之后若被 closeShutter 重新盖上就再也揭不开）。
+        pendingFirstFrame = false;
+        firstFrameReported = false;
     }
 
     private void releaseMedia() {

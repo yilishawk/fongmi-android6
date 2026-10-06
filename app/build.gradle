@@ -63,7 +63,22 @@ android {
         //    唯一变量 = 用 `--vout=` 把 `obj.force` 置 true（`core_modules.c:270`），从而跳过第二道门禁。
         //    ⚠ 探针代价：字幕失效（opaque 本来就混不了字幕）。**成功后须做「补字幕 surface」的根因修复。**
         //    ⚠ 发版必须 `-f release_tag=<名> -f prerelease=true`，不得顶掉 `releases/latest`。
-        versionCode 582
+        // → 583（2026-10-06，**真根因修复，非探针**）：给 media3 上报「首帧已渲染」。
+        //    ⭐⭐⭐⭐⭐ 根因 = media3 `PlayerView` 的 `exo_shutter`（纯黑 `match_parent`、XML 里
+        //    没写 visibility ⇒ 默认 VISIBLE）**从未被揭开**。`VlcPlayer` 是 `SimpleBasePlayer`
+        //    子类，而 media3 只在子类置位 `State.Builder#setNewlyRenderedFirstFrame(true)` 时才派发
+        //    `EVENT_RENDERED_FIRST_FRAME` ⇒ `PlayerView.onRenderedFirstFrame()` ⇒
+        //    `shutterView.setVisibility(INVISIBLE)`（`PlayerView.java` 里**全类唯一**揭开点）。
+        //    我们**从未调用过它** ⇒ 画面永远被黑幕盖住：有声音、零像素、连花屏/绿屏/一闪都没有。
+        //    对照：mpv 有（`MpvVideoState.consumeFirstFrameEvent()` → `MpvStateBuilder`），
+        //    EXO 由 `ExoPlayer` 内部自派发 —— 只有这条 VLC 适配层漏了。
+        //    ⭐ 同时解释 582 判读：`event Vout: count=1` 实测 6 次、`videoSize=1080x608` 上报 6 次、
+        //    解码器进 `COLOR_FormatSurface` 直通 ⇒ **渲染早就成功了，只是被盖住**。
+        //    唯一变量 = `VlcPlayer` 加 2 个字段 + `refreshVideoSize()` 1 处置位 + `getState()` 1 处
+        //    消费上报 + `resetPlaybackState()` 清零。**门禁①②/`--vout=`/解码/vout 全不动。**
+        //    回退 = 删掉 `getState()` 里 `.setNewlyRenderedFirstFrame(consumeFirstFrame())` 一行。
+        //    判读全文：`.gradle-user/2026-10-06-根因定案-media3黑幕未揭开.md`
+        versionCode 583
         versionName "5.6.3"
         externalNativeBuild {
             cmake {
