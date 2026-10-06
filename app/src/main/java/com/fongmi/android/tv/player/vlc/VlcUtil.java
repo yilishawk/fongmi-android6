@@ -152,10 +152,43 @@ public final class VlcUtil {
             // ⭐ 判据**不依赖画面**（故不是哑探针，这一点与 578 不同）：
             //   ✅ 生效   ⇒ `dumpsys SurfaceFlinger` 里该 layer 由 **32bpp → 16bpp**（画面可能同时出来）
             //   ❌ 未生效 ⇒ 仍 32bpp ⇒ 排除该假设
-            //   ⚠ 第三者 ⇒ vout 建不起来（`count=0`）⇒ 立刻删本行回退到 577
             //
-            // 回退：删掉本行即回到 577 状态（`gles2` / `count=1`），无其它耦合。
-            options.add("--android-display-chroma=RV16");
+            // ⚠ 579 真机判读（2026-10-06 12:00）：**该假设不成立** —— options 确认变成
+            //   `[--verbose=2, --android-display-chroma=RV16, --aout=...]`（等号形式且顶掉了自动追加的
+            //   空格形式），但 vout 链与 577 **逐行相同**：`using vout display module "gles2"` +
+            //   `original format sz 1088x544, 4cc ANOP`（`4cc` 仍 ANOP，未变 RV16），画面仍黑。
+            //   ⇒ **`--android-display-chroma` 对 `gles2` 无效**（该模块不认它 / 不据此改输出 chroma）。
+            //   ⇒ 580 已删掉本行，转 `gles2`/libplacebo 色彩管线（见下）。
+            // options.add("--android-display-chroma=RV16");   // 579 已证无效，删
+
+            // ⭐⭐⭐ 探针 8（580）`gles2` 色彩/渲染管线三选项（唯一新变量，凯哥 12:04 批准「A」）。
+            //
+            // 依据（`.so` 取证，全部真实存在，非猜测）：
+            //   `target-prim`      @4045010（紧邻 `glr->texture != 0` / `uniform %s` /
+            //                      `=== Fragment shader for fourcc ===`）
+            //   `target-trc`       @4477905（旁 `Tone-mapping parameter` / `BT.2100 PQ`）
+            //   `tone-mapping`     @4530317（旁 `dither-algo`）
+            //   `tone-mapping-desat`、`rendering-intent`、`dither` 亦在。
+            //   ⇒ 本 `gles2` 确为 **libplacebo** 驱动（`pl_context_create`/`pl_shader_color_map` 全在）。
+            //
+            // 假设：画面黑的根因在 **`gles2` 的 GL 输出**（已排除 源/软解硬解/glconv/视图类型/
+            //   合成链路/--vout 所有名字/--android-display-chroma/Vulkan/解码错误）。libplacebo 在
+            //   「把 YUV420 源映射到屏幕显示色域/转移曲线」时，若源元数据或默认映射选错，可能生成
+            //   一片纯黑。把目标色域/曲线**钉成 BT.709**（SDR 普通屏的标准）+ 关 tone-mapping，
+            //   赌这条色彩映射就是断点。
+            //
+            // ⭐ 判据**不依赖画面**（与 579 一致）：
+            //   ✅ 出画 ⇒ 中
+            //   ❌ 仍黑 ⇒ 色彩映射也不是断点，剩 TextureView（B）/ 换 AAR（C）/ 收手（D）
+            //   副作用观察（静默，不改变量数，故三选项一并发）：
+            //     ① 若某选项名非法 ⇒ `Unknown option 'xxx'`（合法即静默）
+            //     ② 若 `--tone-mapping=disabled` 被拒（3.0.21 可能不支持该取值）⇒ 日志告警，
+            //        下一轮去掉它、只留 target-prim/trc
+            //
+            // 回退：删掉下面三行即回到 579/577 状态（`gles2` / `count=1`），无其它耦合。
+            options.add("--target-prim=bt709");
+            options.add("--target-trc=bt709");
+            options.add("--tone-mapping=disabled");
 
             // ⭐⭐ 577 的**真正发现**（不是 vout，是**解码器**）—— 来自 576 的 `VLC-std`：
             //   looking for video decoder module matching "mediacodec_ndk,all": 14 candidates

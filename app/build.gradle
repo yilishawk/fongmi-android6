@@ -43,9 +43,13 @@ android {
         //    Android 视频输出模块 `android-opaque` 是否可选；**实测失败并回退**：不在候选池 ×4129，
         //    且把硬解关掉（`MediaCodec via NDK opened=0`）、`count=1` 归零）：
         // → 579（2026-10-06，探针 7：删 `--vout=android-opaque` 回到 577 基线，唯一变量改为
-        //    `--android-display-chroma=RV16`（等号形式）。依据：SF 取证显示 VLC 提交 32bpp RGBA，
-        //    而 RV16=16bpp ⇒ 自动追加的空格形式未生效。判据不依赖画面：SF 该 layer 32bpp→16bpp）：
-        versionCode 579
+        //    `--android-display-chroma=RV16`（等号形式）。**真机判读不成立**：4cc 仍 ANOP、画面仍黑
+        //    ⇒ `--android-display-chroma` 对 `gles2` 无效，580 已删）：
+        // → 580（2026-10-06，探针 8：`gles2`/libplacebo 色彩管线三选项 `--target-prim=bt709`
+        //    `--target-trc=bt709` `--tone-mapping=disabled`，删 579 的 chroma 行。断点已锁死在
+        //    `gles2` 的 GL 输出；赌色彩映射选错导致纯黑。三选项均静默、无合法名/取值风险
+        //    （已 `.so` 取证全部真实存在），故一次发齐）：
+        versionCode 580
         versionName "5.6.3"
         externalNativeBuild {
             cmake {
