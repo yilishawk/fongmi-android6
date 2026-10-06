@@ -115,24 +115,47 @@ public final class VlcUtil {
             //     ⇒ **指定一个不存在的 `--vout` 名，比不指定更糟。**
             //   判读全文：`.gradle-user/2026-10-06-576判读-android-display不可选.md`
 
-            // ⭐⭐⭐ 探针 6（578）`--vout=android-opaque` —— 2026-10-06 10:40 凯哥批准（唯一变量）。
+            // ⚠⚠ 探针 6（578）`--vout=android-opaque` —— 2026-10-06 11:05 **判读失败并回退**，勿再启用。
+            //   实测（`.gradle-user/2026-10-06-探针6-578判读.md`，10:55 起 205,225 行，零例外）：
+            //     looking for vout display module matching "android-opaque": 5 candidates   ×4129
+            //     no vout display modules matched                                           ×4129
+            //     decoder: Opaque Vout request failed                                       ×7
+            //     decoder: MediaCodec via NDK closed = 7 / opened = 0                       ← 硬解被关
+            //     event Vout: count=0 ×4130 / count=1 ×0
             //
-            // 依据（`.so` 取证）：libvlc.so 里有**两个** Android 视频输出模块的描述串 ——
-            //     "Android video output"        （旁有短名串 `ANW`）
-            //     "Android opaque video output" （shortcut 串 `android-opaque`）
-            //   `android_display`（`android-display`）已被 574/576 **实测**证明不在运行时候选池；
-            //   但 **`android-opaque` 是另一个模块，从未试过**。
+            //   ⭐⭐⭐ 结构性结论：`android-opaque` **不是给 `--vout=` 用的**。日志里
+            //     `decoder: Opaque Vout request failed` 表明它是 **mediacodec 向 vout 请求
+            //     opaque display 的内部通道（direct-rendering 直通）**，并不是从 `vout display`
+            //     模块池里 `vlc_module_load` 出来的显示模块。强制用 `--vout=` 指定它 ⇒ 把
+            //     mediacodec 推进 opaque 分支 ⇒ vout 端无对应 display ⇒ **硬解被整个关掉**并退软解。
             //
-            // ⚠ 影响面（与 576 同型风险）：若它同样不在候选池，`vlc_module_load(strict=true)`
-            //   **不回退** ⇒ 会退化成 `no vout display modules matched` + `event Vout: count=0`。
-            //   但用户可见表现与现状一致（本来就黑），且**判据一眼可辨**：
-            //     ✅ 可选 ⇒ `using vout display module "android-opaque"`（走直通路径，与 EXO 同类）
-            //     ❌ 不可选 ⇒ `looking for vout display module matching "android-opaque": 5 candidates`
-            //                 + `no vout display modules matched`
-            //   ⚠ 二者之间还有第三种可能：已注册但 `Open` 失败 —— 该情形本日志**无法区分**。
+            //   ⇒ `--vout=` 4 战 4 负（574 / 576 / 578，反例 577 不写反而正常），**整条路作废**。
+            //   ⚠ 578 的「一样黑屏」是哑信息：它的成因是 `count=0`（vout 根本没建），
+            //     与 577 的 `count=1`（四层全建成）仍黑**是两个现象**，对定位零贡献。
+
+            // ⭐⭐⭐ 探针 7（579）`--android-display-chroma=RV16`（**等号**形式）—— 唯一变量。
             //
-            // 回退：删掉本行即回到 577 状态（`gles2`），无其它耦合。
-            options.add("--vout=android-opaque");
+            // 依据（三条实测证据，不是推测）：
+            //   ① libvlc.so 里 `android-display-chroma` 真实存在（1 命中）⇒ 合法选项。
+            //   ② 但 `LibVLC` 构造器自动追加的是**空格形式**：`--android-display-chroma` 与 `RV16`
+            //      是两个独立 argv 元素（见 577 日志
+            //      `options=[..., --aout=android_audiotrack, --android-display-chroma, RV16]`）。
+            //      VLC 的命令行解析按 `=` 取值，空格形式很可能**没把 RV16 绑上去**；
+            //      而 577/578 日志里 `Unknown option` 均为 **0 次** ⇒ **不能据此判定空格形式生效**
+            //      —— 无 `-` 前缀的 `RV16` 会被当作 MRL 静默丢弃，不报错。
+            //   ③ ⭐ 决定性反证：§44 的 SurfaceFlinger 取证显示 **VLC 提交的 buffer = 32bpp RGBA**，
+            //      而 RV16 = **16bpp RGB565** ⇒ **RV16 实际没有生效**（否则应是 16bpp）。
+            //
+            // 假设：VLC 以 RGBA（带 alpha）渲染；若 alpha 未按不透明处理 ⇒ 合成结果纯黑。
+            //       这与「VLC 以 ~25 fps 稳定提交帧、但 screencap 纯黑」完全吻合。
+            //
+            // ⭐ 判据**不依赖画面**（故不是哑探针，这一点与 578 不同）：
+            //   ✅ 生效   ⇒ `dumpsys SurfaceFlinger` 里该 layer 由 **32bpp → 16bpp**（画面可能同时出来）
+            //   ❌ 未生效 ⇒ 仍 32bpp ⇒ 排除该假设
+            //   ⚠ 第三者 ⇒ vout 建不起来（`count=0`）⇒ 立刻删本行回退到 577
+            //
+            // 回退：删掉本行即回到 577 状态（`gles2` / `count=1`），无其它耦合。
+            options.add("--android-display-chroma=RV16");
 
             // ⭐⭐ 577 的**真正发现**（不是 vout，是**解码器**）—— 来自 576 的 `VLC-std`：
             //   looking for video decoder module matching "mediacodec_ndk,all": 14 candidates

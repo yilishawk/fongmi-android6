@@ -40,8 +40,12 @@ android {
         // → 577（2026-10-06，回退 `--vout=android-display`（574/576 两轮实测均不可选），
         //    改为解码器自检日志）：
         // → 578（2026-10-06，探针 6：`--vout=android-opaque` —— 唯一变量，测 `.so` 里另一个
-        //    Android 视频输出模块 `android-opaque` 是否可选；失败即删该行回到 577）：
-        versionCode 578
+        //    Android 视频输出模块 `android-opaque` 是否可选；**实测失败并回退**：不在候选池 ×4129，
+        //    且把硬解关掉（`MediaCodec via NDK opened=0`）、`count=1` 归零）：
+        // → 579（2026-10-06，探针 7：删 `--vout=android-opaque` 回到 577 基线，唯一变量改为
+        //    `--android-display-chroma=RV16`（等号形式）。依据：SF 取证显示 VLC 提交 32bpp RGBA，
+        //    而 RV16=16bpp ⇒ 自动追加的空格形式未生效。判据不依赖画面：SF 该 layer 32bpp→16bpp）：
+        versionCode 579
         versionName "5.6.3"
         externalNativeBuild {
             cmake {
