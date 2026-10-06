@@ -146,6 +146,41 @@ public final class VlcPlayer extends SimpleBasePlayer {
     private final org.videolan.libvlc.MediaPlayer vlc;
     private final IVLCVout vout;
 
+    /**
+     * ⭐⭐⭐⭐⭐ VLC 原生 vout 的**唯一门禁**（2026-10-06 根因定案）。
+     *
+     * <p>VLC 3.0.21 的 {@code modules/video_output/android/display.c} 在 {@code OpenCommon()} 里有一道检查：</p>
+     * <pre>
+     *   if (!AWindowHandler_canSetVideoLayout(p_awh)) {
+     *       // It's better to use gles2 if we are not able to change the video layout
+     *       vout_display_DeleteWindow(vd, embed);
+     *       return VLC_EGENERIC;        // ⚠ 无任何 msg_* ⇒ 日志完全静默
+     *   }
+     * </pre>
+     * <p>而 {@code utils.c} 里该函数只返回一个 bool：</p>
+     * <pre>
+     *   bool AWindowHandler_canSetVideoLayout(AWindowHandler *p_awh)
+     *   { return p_awh->b_has_video_layout_listener; }
+     * </pre>
+     * <p>这个 bool 来自 Java 侧 {@code AWindow.registerNative()} 的返回 flags，而 flags 取决于
+     * {@code attachViews()} 有没有传 listener —— {@code javap -c} 实证
+     * {@code public void attachViews() { attachViews(null); }}，两个重载的**唯一差异**就是这个字段。</p>
+     *
+     * <p>⇒ 不注册 listener 时：{@code android_opaque}(分数 280) / {@code android_display}(260) 这两个
+     * **分数高于 gles2** 的原生 vout 会全部**静默**失败，VLC 落到 {@code gles2}；
+     * {@code mediacodec} 于是拿不到 opaque 直通通道（日志 {@code Opaque Vout request failed}），
+     * 退化为 {@code glconv_android} + {@code gles2} 渲染 ⇒ <b>黑屏</b>（且日志看起来一切健康）。</p>
+     *
+     * <p>⚠ 最小实现 = <b>只打日志</b>，刻意不动布局逻辑，以保证「换 vout 路径」是唯一变量。
+     * ⚠ 回退：把 {@code attachViews(layoutListener)} 改回无参 {@code attachViews()} 即可（一行）。
+     * 判读全文：{@code .gradle-user/2026-10-06-根因定案-android-display门禁.md}</p>
+     */
+    private final IVLCVout.OnNewVideoLayoutListener layoutListener =
+            (vlcVout, width, height, visibleWidth, visibleHeight, sarNum, sarDen) ->
+                    logD("onNewVideoLayout " + width + "x" + height
+                            + " visible " + visibleWidth + "x" + visibleHeight
+                            + " sar " + sarNum + "/" + sarDen);
+
     /** 当前 playlist（本引擎实际只用第 currentIndex 条，其余为占位，供 CHANGE_MEDIA_ITEMS 语义完整）。 */
     private final List<MediaItem> playlist = new ArrayList<>();
 
@@ -651,7 +686,10 @@ public final class VlcPlayer extends SimpleBasePlayer {
             }
             this.videoOutput = videoOutput;
             if (!bindVideoOutput(videoOutput)) return Futures.immediateVoidFuture();
-            vout.attachViews();
+            // ⭐⭐⭐⭐⭐ 必须传 listener：无参版 ≡ attachViews(null) ⇒ b_has_video_layout_listener=false
+            //   ⇒ android_display(260)/android_opaque(280) 的 Open() 静默失败 ⇒ 退 gles2 ⇒ 黑屏。
+            //   完整证据链见上方 layoutListener 字段注释。
+            vout.attachViews(layoutListener);
             logD("setVideoOutput: bound " + typeName(videoOutput)
                     + " wasAttached=" + wasAttached + " nowAttached=" + vout.areViewsAttached());
         } catch (Throwable e) {

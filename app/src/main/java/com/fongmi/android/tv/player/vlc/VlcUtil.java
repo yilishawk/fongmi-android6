@@ -123,15 +123,19 @@ public final class VlcUtil {
             //     decoder: MediaCodec via NDK closed = 7 / opened = 0                       ← 硬解被关
             //     event Vout: count=0 ×4130 / count=1 ×0
             //
-            //   ⭐⭐⭐ 结构性结论：`android-opaque` **不是给 `--vout=` 用的**。日志里
-            //     `decoder: Opaque Vout request failed` 表明它是 **mediacodec 向 vout 请求
-            //     opaque display 的内部通道（direct-rendering 直通）**，并不是从 `vout display`
-            //     模块池里 `vlc_module_load` 出来的显示模块。强制用 `--vout=` 指定它 ⇒ 把
-            //     mediacodec 推进 opaque 分支 ⇒ vout 端无对应 display ⇒ **硬解被整个关掉**并退软解。
+            //   ⭐⭐⭐⭐ 2026-10-06 13:3x **根因定案后修正本段结论**（原文见 git 历史）：
+            //     `android-opaque` **确实是** `display.c` 里 `add_submodule()` 出来的正规
+            //     `vout display` 模块（`set_capability("vout display", 280)`，比 gles2 还高）。
+            //     574/576/578 全失败的真因是 **`OpenCommon()` 在
+            //     `AWindowHandler_canSetVideoLayout()` 门禁处静默返回 EGENERIC**（因为我们没注册
+            //     `IVLCVout.OnNewVideoLayoutListener`），**不是**「名字不对 / 不在候选池」。
+            //     ⚠ VLC 的 `no vout display modules matched` **在 Open() 失败时也会打**，措辞误导。
+            //     `decoder: Opaque Vout request failed` 来自 `mediacodec.c`（解码器），
+            //     且 **577 基线同样存在**，不是 578 独有。
+            //   判读全文：`.gradle-user/2026-10-06-根因定案-android-display门禁.md`
             //
-            //   ⇒ `--vout=` 4 战 4 负（574 / 576 / 578，反例 577 不写反而正常），**整条路作废**。
-            //   ⚠ 578 的「一样黑屏」是哑信息：它的成因是 `count=0`（vout 根本没建），
-            //     与 577 的 `count=1`（四层全建成）仍黑**是两个现象**，对定位零贡献。
+            //   ⇒ **仍成立**的部分：`vlc_module_load(strict=true)` 不回退 ⇒ 指定一个**打不开**的
+            //     `--vout` 名比不指定更糟（578 把硬解也一并关掉）。故这三次探针仍作废。
 
             // ⭐⭐⭐ 探针 7（579）`--android-display-chroma=RV16`（**等号**形式）—— 唯一变量。
             //
@@ -161,34 +165,14 @@ public final class VlcUtil {
             //   ⇒ 580 已删掉本行，转 `gles2`/libplacebo 色彩管线（见下）。
             // options.add("--android-display-chroma=RV16");   // 579 已证无效，删
 
-            // ⭐⭐⭐ 探针 8（580）`gles2` 色彩/渲染管线三选项（唯一新变量，凯哥 12:04 批准「A」）。
-            //
-            // 依据（`.so` 取证，全部真实存在，非猜测）：
-            //   `target-prim`      @4045010（紧邻 `glr->texture != 0` / `uniform %s` /
-            //                      `=== Fragment shader for fourcc ===`）
-            //   `target-trc`       @4477905（旁 `Tone-mapping parameter` / `BT.2100 PQ`）
-            //   `tone-mapping`     @4530317（旁 `dither-algo`）
-            //   `tone-mapping-desat`、`rendering-intent`、`dither` 亦在。
-            //   ⇒ 本 `gles2` 确为 **libplacebo** 驱动（`pl_context_create`/`pl_shader_color_map` 全在）。
-            //
-            // 假设：画面黑的根因在 **`gles2` 的 GL 输出**（已排除 源/软解硬解/glconv/视图类型/
-            //   合成链路/--vout 所有名字/--android-display-chroma/Vulkan/解码错误）。libplacebo 在
-            //   「把 YUV420 源映射到屏幕显示色域/转移曲线」时，若源元数据或默认映射选错，可能生成
-            //   一片纯黑。把目标色域/曲线**钉成 BT.709**（SDR 普通屏的标准）+ 关 tone-mapping，
-            //   赌这条色彩映射就是断点。
-            //
-            // ⭐ 判据**不依赖画面**（与 579 一致）：
-            //   ✅ 出画 ⇒ 中
-            //   ❌ 仍黑 ⇒ 色彩映射也不是断点，剩 TextureView（B）/ 换 AAR（C）/ 收手（D）
-            //   副作用观察（静默，不改变量数，故三选项一并发）：
-            //     ① 若某选项名非法 ⇒ `Unknown option 'xxx'`（合法即静默）
-            //     ② 若 `--tone-mapping=disabled` 被拒（3.0.21 可能不支持该取值）⇒ 日志告警，
-            //        下一轮去掉它、只留 target-prim/trc
-            //
-            // 回退：删掉下面三行即回到 579/577 状态（`gles2` / `count=1`），无其它耦合。
-            options.add("--target-prim=bt709");
-            options.add("--target-trc=bt709");
-            options.add("--tone-mapping=disabled");
+            // ⚠⚠ 探针 8（580）`--target-prim/trc=bt709` + `--tone-mapping=disabled` 已于
+            //   2026-10-06 判读为**无效并删除**：三个选项都进了 runtime、`Unknown option`=0，
+            //   但 `gles2` 逐行无变化、`4cc` 仍 ANOP ⇒ **色彩映射假设不成立**。
+            //   ⇒ **根因不在这里**（不是 gles2 的 bug）—— 见
+            //     `VlcPlayer.handleSetVideoOutput()` 的 `attachViews(listener)` 与
+            //     `.gradle-user/2026-10-06-根因定案-android-display门禁.md`。
+            // 回退：本块无 active 选项；options 现在只剩 `--verbose=2`（+ LibVLC 自动追加的
+            //       `--aout=*` 与 `--android-display-chroma RV16`），即 577 的选项基线。
 
             // ⭐⭐ 577 的**真正发现**（不是 vout，是**解码器**）—— 来自 576 的 `VLC-std`：
             //   looking for video decoder module matching "mediacodec_ndk,all": 14 candidates

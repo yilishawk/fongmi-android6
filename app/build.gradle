@@ -45,11 +45,16 @@ android {
         // → 579（2026-10-06，探针 7：删 `--vout=android-opaque` 回到 577 基线，唯一变量改为
         //    `--android-display-chroma=RV16`（等号形式）。**真机判读不成立**：4cc 仍 ANOP、画面仍黑
         //    ⇒ `--android-display-chroma` 对 `gles2` 无效，580 已删）：
-        // → 580（2026-10-06，探针 8：`gles2`/libplacebo 色彩管线三选项 `--target-prim=bt709`
-        //    `--target-trc=bt709` `--tone-mapping=disabled`，删 579 的 chroma 行。断点已锁死在
-        //    `gles2` 的 GL 输出；赌色彩映射选错导致纯黑。三选项均静默、无合法名/取值风险
-        //    （已 `.so` 取证全部真实存在），故一次发齐）：
-        versionCode 580
+        // → 580（2026-10-06，探针 8：`gles2`/libplacebo 色彩管线三选项。**判读无效**：三选项均进
+        //    runtime、`Unknown option`=0，但 `gles2` 逐行无变化、`4cc` 仍 ANOP ⇒ 色彩映射假设不成立）：
+        // → 581（2026-10-06，**根因修复，非探针**）：注册 `IVLCVout.OnNewVideoLayoutListener`
+        //    （`VlcPlayer.attachViews(layoutListener)`）。根因 = VLC 原生 vout
+        //    `android_display`(260)/`android_opaque`(280) 的 `Open()` 被
+        //    `AWindowHandler_canSetVideoLayout()`（= `b_has_video_layout_listener`）静默挡掉，
+        //    VLC 退到 `gles2` ⇒ 黑屏。唯一变量 = vout 路径；同时删掉 580 的三行探针（已证无效）
+        //    回到 577 选项基线。回退 = 改回无参 `attachViews()`。
+        //    判读全文：`.gradle-user/2026-10-06-根因定案-android-display门禁.md`
+        versionCode 581
         versionName "5.6.3"
         externalNativeBuild {
             cmake {
