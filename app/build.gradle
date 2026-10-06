@@ -37,7 +37,7 @@ android {
         // App 内"检查更新"是拿远端 JSON 的 code 与 BuildConfig.VERSION_CODE 比大小，相等即判定"无需更新"。
         // 不抬的话 CI 产出的 dist/<flavor>.json 里 code 与已装包相同 ⇒ 比较恒为 false ⇒
         // 更新提示永不弹出（每次发版都必须递增）。
-        versionCode 576
+        versionCode 577
         versionName "5.6.3"
         externalNativeBuild {
             cmake {

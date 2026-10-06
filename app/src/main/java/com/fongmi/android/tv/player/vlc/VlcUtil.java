@@ -1,6 +1,8 @@
 package com.fongmi.android.tv.player.vlc;
 
 import android.content.Context;
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
 
 import org.videolan.libvlc.LibVLC;
 
@@ -100,27 +102,31 @@ public final class VlcUtil {
             //   也就是说这个探针要么给出 debug 日志，要么明确告诉你它没生效，不会静默。
             options.add("--verbose=2");
 
-            // ⚠ 探针 5（576）：`--vout=android-display`（**连字符**）。
-            //
-            // 【为什么是 574 作废后的重做】574 写的是 `android_display`（**下划线**），名字对不上 ⇒ 作废。
-            //   根因（VLC 3.0.21 `src/modules/modules.c` 的 `module_match_name()` 原文）：
-            //     匹配**只遍历 `m->pp_shortcuts[i]`**（模块内部名 `psz_name`/`psz_shortname` 完全不参与），
-            //     `strcasecmp` ⇒ 大小写不敏感，但 **`-`（连字符）与 `_`（下划线）不等价**；
-            //     且 vout 以 strict=true 请求 ⇒ 不匹配即返回 NULL、**不回退**。
-            //   该模块源码 `modules/video_output/android/display.c` 声明 `add_shortcut("android-display")`。
-            //   ⭐ 574 日志里的 `5 candidates` 恰恰说明 capability 池里**有**它，只是名字对不上；
-            //   ⭐ 574 用到的 `android_display` 是 `.so` 里的**描述串**（紧邻 "Android video output"），
-            //     **不参与 `--vout` 匹配** —— 原注释「该模块不在池里」的判读**是错的，已修正**。
-            //
-            // 【本次意图】切到**非 GL** 的 android-display 路径（源码注释自称是 gles2 失败时的回退），
-            //   其 `OpenCommon()` **同时处理 `VLC_CODEC_ANDROID_OPAQUE`**（`OpenOpaque` 也调它）
-            //   ⇒ 支持硬解 opaque 直通 ⇒ **若断点确在 gles2/EGL，这条路径可能绕过并出画**。
-            //
-            // 【判据】日志出现 `using vout display module "android-display"` ⇒ 选中成功；
-            //   若仍 `no vout display modules matched` ⇒ 这次才是真的不可用（回退该行）。
-            // 【回退】删掉下面这一行。
-            // 【依据】`.gradle-user/2026-10-05-574判读修正-android-display拼写.md`
-            options.add("--vout=android-display");
+            // ⚠⚠ 探针 5（576）`--vout=android-display` 已于 2026-10-06 **判读为失败并回退**，勿再启用：
+            //   实测（`.gradle-user/live576.txt`）：
+            //     looking for vout display module matching "android-display": 5 candidates
+            //     no vout display modules matched                                  ×802
+            //     event Vout: count=0                                              ×802
+            //   ⇒ **连字符也匹配不到**（574 的下划线同样失败）⇒ 该模块**运行时不在候选池**，
+            //     **不是拼写问题**。`.so` 里有 `android-display` shortcut 字符串，但
+            //     **字符串在 ≠ 模块已注册**。
+            //   ⚠⚠ 更糟的是：`vlc_module_load(strict=true)` **不回退** ⇒ 575（无 `--vout`）
+            //     是 `using vout display module "gles2"` / `count=1`；576 变成 **`count=0`**。
+            //     ⇒ **指定一个不存在的 `--vout` 名，比不指定更糟。**
+            //   判读全文：`.gradle-user/2026-10-06-576判读-android-display不可选.md`
+
+            // ⭐⭐ 577 的**真正发现**（不是 vout，是**解码器**）—— 来自 576 的 `VLC-std`：
+            //   looking for video decoder module matching "mediacodec_ndk,all": 14 candidates
+            //   W VLC: Exception occurred in MediaCodecInfo.getCapabilitiesForType   ← 硬解能力识别失败
+            //   using ffmpeg Lavc58.134.100 / allowing 6 thread(s) for decoding
+            //   using video decoder module "avcodec"                                 ← 退回软解
+            //   [h264] get_buffer() failed / thread_get_buffer() failed / no frame!  ← 软解也解不出帧
+            //   而 **EXO 用同一个 MTK 硬解器（c2.mtk.avc.decoder）正常出画**
+            //   ⇒ 系统硬解没坏，断点在「VLC 怎么问解码器能力」。
+            //   ⇒ 所以本轮不再折腾 vout，改为**把解码器清单一次性打进日志**（见下方自检）。
+
+            // ⭐ 解码器自检：只读枚举，不参与播放决策（见方法注释）。
+            dumpVideoDecoders();
 
             LibVLC libVlc = new LibVLC(context.getApplicationContext(), options);
             VlcLog.d("new LibVLC OK: version=" + LibVLC.version() + " options=" + options);
@@ -128,6 +134,81 @@ public final class VlcUtil {
         } catch (Throwable e) {
             VlcLog.e("new LibVLC failed: " + describe(e));
             return null;
+        }
+    }
+
+    /** 自检只跑一次（create 可能被多次调用）。 */
+    private static boolean decodersDumped;
+
+    /**
+     * ⭐ 视频解码器自检（诊断用，**只读**，不参与任何播放决策）。
+     *
+     * <h2>为什么加它</h2>
+     *
+     * 576 现场日志（`.gradle-user/live576.txt`）显示断点在**解码器**，不在 vout：
+     * <pre>
+     * looking for video decoder module matching "mediacodec_ndk,all": 14 candidates
+     * W VLC: Exception occurred in MediaCodecInfo.getCapabilitiesForType   ← 硬解能力识别失败
+     * using ffmpeg Lavc58.134.100 / allowing 6 thread(s) for decoding
+     * using video decoder module "avcodec"                                 ← 退回软解
+     * [h264] get_buffer() failed / thread_get_buffer() failed / no frame!  ← 软解也解不出帧
+     * </pre>
+     *
+     * 而 <b>EXO 用同一个 MTK 硬解器（{@code c2.mtk.avc.decoder}）正常出画</b> ⇒
+     * 系统硬解没坏，问题在「谁去问能力、怎么问」。
+     *
+     * <h2>它回答什么</h2>
+     * <ol>
+     *   <li>MTK 硬解器是否存在、是否被标记为硬件加速；</li>
+     *   <li>{@code getCapabilitiesForType("video/avc")} 在本机是否抛异常、抛的是什么；</li>
+     *   <li>若抛异常，是「个别解码器」还是「全部」——后者指向平台/API 层面。</li>
+     * </ol>
+     *
+     * <h2>边界</h2>
+     * 只做枚举与查询：<b>不创建 codec、不 configure、不改任何播放参数</b>；
+     * 任何异常都被吞掉，绝不影响播放。{@code isHardwareAccelerated()} 是 API 29+，
+     * 低版本返回 {@code "?"}（不猜）。
+     */
+    static void dumpVideoDecoders() {
+        if (decodersDumped) return;
+        decodersDumped = true;
+        try {
+            MediaCodecInfo[] infos = new MediaCodecList(MediaCodecList.ALL_CODECS).getCodecInfos();
+            VlcLog.d("[自检] 枚举 codec 共 " + infos.length + " 个，筛 video/avc");
+            int hit = 0;
+            for (MediaCodecInfo info : infos) {
+                boolean hasAvc = false;
+                for (String t : info.getSupportedTypes()) {
+                    if ("video/avc".equalsIgnoreCase(t)) {
+                        hasAvc = true;
+                        break;
+                    }
+                }
+                if (!hasAvc) continue;
+                hit++;
+                String caps;
+                try {
+                    MediaCodecInfo.CodecCapabilities c = info.getCapabilitiesForType("video/avc");
+                    caps = "caps=OK(profiles=" + (c.profileLevels == null ? 0 : c.profileLevels.length)
+                            + ", colorFormats=" + (c.colorFormats == null ? 0 : c.colorFormats.length) + ")";
+                } catch (Throwable e) {
+                    caps = "caps=EXCEPTION " + describe(e);
+                }
+                VlcLog.d("[自检] #" + hit + " " + info.getName() + " hw=" + hwFlag(info) + " " + caps);
+            }
+            VlcLog.d("[自检] video/avc 解码器共 " + hit + " 个");
+        } catch (Throwable e) {
+            VlcLog.e("[自检] dumpVideoDecoders 失败: " + describe(e));
+        }
+    }
+
+    /** {@code isHardwareAccelerated()} 需要 API 29；低版本不猜，返回 "?"。 */
+    private static String hwFlag(MediaCodecInfo info) {
+        if (android.os.Build.VERSION.SDK_INT < 29) return "?";
+        try {
+            return String.valueOf(info.isHardwareAccelerated());
+        } catch (Throwable e) {
+            return "ERR";
         }
     }
 
