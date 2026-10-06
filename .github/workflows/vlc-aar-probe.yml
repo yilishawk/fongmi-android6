@@ -1,0 +1,67 @@
+name: VLC AAR Probe (diagnostic, manual only)
+
+# =============================================================================
+# 只读诊断：本机网络被代理挡住 Maven Central，但 CI runner 能直连。
+# 本 workflow 只做一件事：把候选的 org.videolan.android:libvlc-all AAR 下下来，
+# 拆出 arm64-v8a/libvlc.so，打印「核心版本串 / libplacebo 标记 / vout 模块名 / 大小」，
+# 用来判断该换哪个版本（C1-a：换一个 gles2 能出画的 libvlc）。
+#
+# ⚠ 纯诊断：不构建 APK、不发 release、不改 app 代码。
+#   用完即删（连同本文件）。
+# =============================================================================
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List ALL available versions (maven-metadata.xml)
+        run: |
+          set -e
+          echo "===== org.videolan.android:libvlc-all 全部版本 ====="
+          curl -fsSL "https://repo1.maven.org/maven2/org/videolan/android/libvlc-all/maven-metadata.xml" -o meta.xml \
+            && cat meta.xml \
+            || echo "(拉取 maven-metadata.xml 失败)"
+
+      - name: Probe candidate AARs
+        run: |
+          set -u
+          CANDIDATES="3.7.7 3.7.1 3.7.0 3.6.5 3.6.4 3.6.3 3.5.7 3.5.0 3.4.4 3.3.4 3.2.12 3.1.7 3.0.13"
+          for V in $CANDIDATES; do
+            echo ""
+            echo "=================== libvlc-all:$V ==================="
+            URL="https://repo1.maven.org/maven2/org/videolan/android/libvlc-all/$V/libvlc-all-$V.aar"
+            if ! curl -fsSL -o "a-$V.aar" "$URL"; then
+              echo "  ❌ 下载失败（该版本在 Maven Central 不存在？）"
+              continue
+            fi
+            echo "  AAR 大小: $(stat -c%s "a-$V.aar") bytes"
+            rm -rf "x-$V"; mkdir -p "x-$V"
+            unzip -o -q "a-$V.aar" -d "x-$V" || true
+            SO=$(find "x-$V" -name 'libvlc.so' -path '*arm64*' | head -1)
+            [ -z "$SO" ] && SO=$(find "x-$V" -name 'libvlc.so' | head -1)
+            if [ -z "$SO" ]; then
+              echo "  ❌ AAR 内未找到 libvlc.so。顶层内容："
+              ls -R "x-$V" | head -30
+              continue
+            fi
+            echo "  libvlc.so: $SO  ($(stat -c%s "$SO") bytes)"
+            echo "  --- 核心版本串 ---"
+            strings -a "$SO" | grep -E "Vetinari|VLC media player|^[0-9]\.[0-9]\.[0-9]+$" | sort -u | head -5 | sed 's/^/    /'
+            echo "  --- libplacebo 标记 ---"
+            for k in pl_context_create PL_SHADER_SIG_COLOR libplacebo pl_shader_color_map; do
+              printf "    %-22s %s\n" "$k" "$(strings -a "$SO" | grep -c "$k")"
+            done
+            echo "  --- vout / 显示模块 ---"
+            for k in android-opaque android_display android-display gles2 vdummy glconv_android libvulkan.so; do
+              printf "    %-22s %s\n" "$k" "$(strings -a "$SO" | grep -c "$k")"
+            done
+            echo "  --- 关键 option ---"
+            for k in target-prim target-trc tone-mapping android-display-chroma; do
+              printf "    %-22s %s\n" "$k" "$(strings -a "$SO" | grep -c "$k")"
+            done
+          done
+          echo ""
+          echo "===== 探针结束 ====="
