@@ -722,6 +722,13 @@ public final class VlcPlayer extends SimpleBasePlayer {
             //   ⇒ android_display(260)/android_opaque(280) 的 Open() 静默失败 ⇒ 退 gles2 ⇒ 黑屏。
             //   完整证据链见上方 layoutListener 字段注释。
             vout.attachViews(layoutListener);
+            // ⭐ 新 surface 绑定 ⇒ 按 media3 语义必须**允许重新上报首帧**。
+            //   `setNewlyRenderedFirstFrame` 的 javadoc 把「首次」的粒度定义为
+            //   "since setting the surface, a rendering reset, or since the stream being rendered
+            //    was changed" —— 换 surface 与换媒体是**两个独立**的重置点，都要覆盖。
+            //   ⚠ 必要性：`PlayerView` 在 `setPlayer()`（isNewPlayer）或 `Tracks` 清空时会
+            //   `closeShutter()` **把幕布重新盖上**；若此处不放开，幕布就再也揭不开 ⇒ 黑屏。
+            resetFirstFrame();
             logD("setVideoOutput: bound " + typeName(videoOutput)
                     + " wasAttached=" + wasAttached + " nowAttached=" + vout.areViewsAttached());
         } catch (Throwable e) {
@@ -1029,6 +1036,22 @@ public final class VlcPlayer extends SimpleBasePlayer {
     }
 
     /**
+     * 允许重新上报首帧。media3 把「首次」的粒度定义为
+     * <i>"since setting the surface, a rendering reset, or since the stream being rendered was
+     * changed"</i> ⇒ 有两个独立的重置点，**都必须覆盖**：
+     * <ul>
+     *   <li><b>换 surface</b>：{@link #handleSetVideoOutput(Object)} 成功绑定后调用
+     *       （{@code PlayerView} 会因 {@code setPlayer()} 而 {@code closeShutter()} 重新盖上幕布）；</li>
+     *   <li><b>换媒体 / 重播</b>：{@link #resetPlaybackState()} 里调用。</li>
+     * </ul>
+     * ⚠ 漏掉任何一个 ⇒ 幕布被重新盖上后再也揭不开 ⇒ 黑屏。
+     */
+    private void resetFirstFrame() {
+        pendingFirstFrame = false;
+        firstFrameReported = false;
+    }
+
+    /**
      * 把 VLC 的三类轨道读成 media3 的 {@link Tracks}。
      *
      * <p>刻意用 {@code getVideoTracks()} / {@code getAudioTracks()} / {@code getSpuTracks()}
@@ -1086,10 +1109,9 @@ public final class VlcPlayer extends SimpleBasePlayer {
         seekable = false;
         tracks = Tracks.EMPTY;
         videoSize = VideoSize.UNKNOWN;
-        // ⭐ 换媒体 / 重播 ⇒ 首帧要重新上报。否则新一段媒体永远等不到 exo_shutter 被揭开
-        //   （黑幕只在收到 onRenderedFirstFrame 时揭开一次，之后若被 closeShutter 重新盖上就再也揭不开）。
-        pendingFirstFrame = false;
-        firstFrameReported = false;
+        // ⭐ 换媒体 / 重播 ⇒ 首帧要重新上报（media3 语义的第二个重置点；第一个在
+        //   handleSetVideoOutput 里）。否则新一段媒体永远等不到 exo_shutter 被揭开。
+        resetFirstFrame();
     }
 
     private void releaseMedia() {

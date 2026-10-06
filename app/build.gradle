@@ -75,7 +75,10 @@ android {
         //    ⭐ 同时解释 582 判读：`event Vout: count=1` 实测 6 次、`videoSize=1080x608` 上报 6 次、
         //    解码器进 `COLOR_FormatSurface` 直通 ⇒ **渲染早就成功了，只是被盖住**。
         //    唯一变量 = `VlcPlayer` 加 2 个字段 + `refreshVideoSize()` 1 处置位 + `getState()` 1 处
-        //    消费上报 + `resetPlaybackState()` 清零。**门禁①②/`--vout=`/解码/vout 全不动。**
+        //    消费上报 + 2 处重置（`handleSetVideoOutput()` 新 surface 绑定 / `resetPlaybackState()`
+        //    换媒体）—— media3 对「首次」的粒度定义含 "since setting the surface"，两个重置点**都必须
+        //    覆盖**，否则 `PlayerView.closeShutter()` 重新盖上幕布后再也揭不开。
+        //    **门禁①②/`--vout=`/解码/vout 全不动。**
         //    回退 = 删掉 `getState()` 里 `.setNewlyRenderedFirstFrame(consumeFirstFrame())` 一行。
         //    判读全文：`.gradle-user/2026-10-06-根因定案-media3黑幕未揭开.md`
         versionCode 583
