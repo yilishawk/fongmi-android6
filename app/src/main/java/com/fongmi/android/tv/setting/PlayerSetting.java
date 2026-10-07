@@ -7,14 +7,13 @@ public class PlayerSetting {
     public static final int ENGINE_EXO = 0;
     public static final int ENGINE_MPV = 1;
     /**
-     * VLC 引擎（2026-10-04 接入）。
+     * ⭐ 2026-10-07（585）：VLC 引擎（曾占用值 {@code 2}）已<b>整体移除</b>。
      *
-     * <p>⭐ 值取 2 是刻意追加在末尾 —— 已存的 {@code player_engine} 是 0/1，
-     * 升级时完全不受影响。回滚时把下面两处 {@code Math.clamp} 的上界改回
-     * {@code ENGINE_MPV}，已存 {@code 2} 会被 clamp 成 {@code 1} ⇒ <b>自动回到 MPV</b>，
-     * 不崩、不需要清数据 —— 这是一个良性回滚。</p>
+     * <p>移除时<b>没有</b>重排任何序号：{@code ENGINE_EXO}/{@code ENGINE_MPV} 仍是 0/1，
+     * 只是把下面两处 {@code Math.clamp} 的上界从 {@code ENGINE_VLC} 改成了 {@code ENGINE_MPV}。
+     * 已存的 {@code player_engine == 2} 会被 clamp 成 {@code 1} ⇒ <b>自动回到 MPV</b>，
+     * 不崩、不需要清数据 —— 这正是 2026-10-04 接入时就设计好的良性回滚路径。</p>
      */
-    public static final int ENGINE_VLC = 2;
     public static final int RENDER_SURFACE = 0;
     public static final int RENDER_TEXTURE = 1;
     public static final int MIN_SCALE = 0;
@@ -27,11 +26,11 @@ public class PlayerSetting {
     private static final int MAX_BACKGROUND = 2;
 
     public static int getEngine() {
-        return Math.clamp(Prefers.getInt("player_engine", ENGINE_EXO), ENGINE_EXO, ENGINE_VLC);
+        return Math.clamp(Prefers.getInt("player_engine", ENGINE_EXO), ENGINE_EXO, ENGINE_MPV);
     }
 
     public static void putEngine(int engine) {
-        Prefers.put("player_engine", Math.clamp(engine, ENGINE_EXO, ENGINE_VLC));
+        Prefers.put("player_engine", Math.clamp(engine, ENGINE_EXO, ENGINE_MPV));
         if (isExo() && DecodeSetting.isTunnel()) putRender(RENDER_SURFACE);
     }
 
@@ -41,10 +40,6 @@ public class PlayerSetting {
 
     public static boolean isMpv() {
         return getEngine() == ENGINE_MPV;
-    }
-
-    public static boolean isVlc() {
-        return getEngine() == ENGINE_VLC;
     }
 
     public static boolean isDebug() {

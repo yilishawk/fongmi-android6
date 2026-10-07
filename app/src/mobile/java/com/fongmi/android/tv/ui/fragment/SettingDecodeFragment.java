@@ -64,8 +64,8 @@ public class SettingDecodeFragment extends BaseFragment {
     }
 
     private void setTunnel(View view) {
-        // 隧道（TunneledPlayback）是 ExoPlayer 独有的通道，MPV / VLC 引擎下切换无意义。
-        if (PlayerSetting.isMpv() || PlayerSetting.isVlc()) return;
+        // 隧道（TunneledPlayback）是 ExoPlayer 独有的通道，MPV 引擎下切换无意义。
+        if (PlayerSetting.isMpv()) return;
         DecodeSetting.putTunnel(!DecodeSetting.isTunnel());
         mBinding.tunnelText.setText(Setting.getSwitch(DecodeSetting.isTunnel()));
     }

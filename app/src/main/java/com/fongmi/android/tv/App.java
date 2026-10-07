@@ -12,7 +12,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.os.HandlerCompat;
 
-import com.fongmi.android.tv.player.vlc.VlcProbe;
 import com.fongmi.android.tv.setting.ProxySetting;
 import com.fongmi.android.tv.setting.Setting;
 import com.fongmi.android.tv.utils.NativeCompat;
@@ -107,12 +106,6 @@ public class App extends Application implements Application.ActivityLifecycleCal
             PreviousProcessExitLogger.log(this);
         }
         ProxySetting.apply();
-        // 2026-10-03 VLC 接入第 1 步：最小探针（见 player/vlc/VlcProbe.java）。
-        // 只回答一个问题：libvlc.so 在这台 Android 6 电视上能不能加载起来。
-        // 只在调试日志开着时跑 —— 关着时这里一行都不执行，行为与加探针前完全一致。
-        // 结果落在 DebugLogStore（9978 /debug/logs），tag = "VlcProbe"。
-        // 验完（或决定不做 VLC）就删掉这一行 + VlcProbe.java + 依赖，见该文件的类注释。
-        if (DebugLogStore.isEnabled()) VlcProbe.run(this);
     }
 
     @Override

@@ -104,7 +104,34 @@ android {
         //    **门禁①②/`--vout=`/解码/vout/首帧上报 全不动。**
         //    回退 = 单文件 `git checkout -- app/src/main/java/com/fongmi/android/tv/player/vlc/VlcPlayer.java`
         //    判读全文：`.gradle-user/2026-10-07-视轨定位修复-方案与实现.md`
-        versionCode 584
+        // → 585（2026-10-07，**放弃 VLC 引擎 —— 整体移除**）：
+        //    ⭐ 决定：VLC（甲方案，570 接入）不再继续，连代码带依赖一并删掉。这不是"关入口"，
+        //    是**彻底移除** —— 上面 570/571/577…584 那些 VLC 修复全部作废，仅作为历史保留。
+        //    删了什么（完整清单见 commit message）：
+        //      ① `app/src/main/java/com/fongmi/android/tv/player/vlc/` 整包 6 个文件
+        //         （VlcPlayer / VlcPlayerEngine / VlcUtil / VlcLog / VlcProbe / VlcErrorMessageProvider）
+        //      ② `PlayerEngine.Type.VLC`、`PlayerEngineFactory` 的 VLC 分支与 `createVlc()`/`isVlcReady()`
+        //      ③ `PlayerSetting.ENGINE_VLC` 与 `isVlc()`；两处 `Math.clamp` 上界 `ENGINE_VLC` → `ENGINE_MPV`
+        //      ④ `PlayerManager.isVlcEngine()`、`VideoSettingPanel.isVlc()`、
+        //         `PlayerEngineDialog` 的 vlc chip、两个 `dialog_player_engine.xml` 的 vlc 按钮
+        //      ⑤ `App.java` 的 `VlcProbe.run()` 探针调用、`R.array.select_engine` 的 VLC 项、
+        //         `play_vlc` 字符串（values / zh-rCN / zh-rTW）
+        //      ⑥ `implementation libs.libvlc.all`、`libs.versions.toml` 的 `libvlc`/`libvlc-all`、
+        //         `proguard-rules.pro` 的 `-keep class org.videolan.**`
+        //      ⑦ `.github/workflows/vlc-aar-probe.yml`
+        //    ⭐ 为什么这是**良性**改动：**没有重排任何持久化序号** —— `ENGINE_EXO`/`ENGINE_MPV`
+        //    仍是 0/1，`PlayerEngine.Type` 仍是 EXO/MPV。已存的 `player_engine == 2`（选过 VLC 的
+        //    用户）会被 clamp 成 `1` ⇒ **自动回到 MPV**，不崩、不需要清数据。这正是 2026-10-04
+        //    接入时就把 VLC 值追加在末尾所预留的回滚路径。
+        //    ⭐ 体积收益（实测：解包 `.gradle-user/aar/libvlc-all-3.5.1.aar` 的 jni payload）：
+        //      armeabi-v7a  未压缩 37.4 MB → 压缩后 ≈18.3 MB
+        //      arm64-v8a    未压缩 41.3 MB → 压缩后 ≈18.6 MB
+        //    ⇒ 每个 APK 预计少 ≈18 MB（584 实测 v7a 119.3 MB / arm64 134.9 MB）。
+        //    ⚠ `packaging.jniLibs.pickFirsts("**/libc++_shared.so")` **保留**（理由见该处注释）。
+        //    ⚠ `gradle.properties` 的 `-Xmx4096m` **保留**（当初因 VLC 体积顶破 2 GB 才抬的，
+        //      但 4 APK 打包本身吃内存，降回去没有收益、只有风险）。
+        //    回退 = `git revert` 585 的提交（依赖 / proguard keep / player/vlc 包一并还原）。
+        versionCode 585
         versionName "5.6.3"
         externalNativeBuild {
             cmake {
@@ -155,23 +182,22 @@ android {
         }
     }
 
-    // 2026-10-03：VLC（org.videolan.android:libvlc-all）与 media3-mpvplayer **各自**都随 AAR
-    // 带一份 libc++_shared.so，同名但内容不同：
+    // 2026-10-03 引入这条 pickFirst；2026-10-07（585）起**它唯一的理由已消失，但仍保留**。
+    //
+    // 起因：VLC（org.videolan.android:libvlc-all）与 media3-mpvplayer **各自**都随 AAR 带一份
+    // libc++_shared.so，同名但内容不同：
     //     armeabi-v7a   VLC 554,808 B   vs   media3 963,028 B
     //     arm64-v8a     VLC 9,236,352 B vs   media3 1,374,336 B
-    // 两年前只有 media3 一家提供，所以一直没冲突；加了 VLC 之后 mergeNativeLibs 会直接报
-    // 重复文件而失败。
+    // mergeNativeLibs 会直接报重复文件而失败。⚠ 必须选 **media3 那一份**：逐符号比对过 5 个
+    // 消费者的未定义符号（libvlc / libvlcjni / libmpv / libplayer / libavcodec，
+    // 见 .gradle-user/VLC接入-门禁复验.md）—— media3 的 963,028 B 让 5 个消费者全部满足，
+    // 而 VLC 那份让 libmpv 缺 23 个、libplayer 缺 1 个、libavcodec 缺 3 个
+    // （std::to_chars/from_chars、bad_function_call vtable、iostream/filebuf vtable、
+    //   __libcpp_verbose_abort）⇒ 选错会让 **MPV 静默全废**。
     //
-    // ⚠ 必须选 **media3 那一份**，这不是口味问题。逐符号比对过 5 个消费者的未定义符号
-    //   （libvlc / libvlcjni / libmpv / libplayer / libavcodec，见 .gradle-user/VLC接入-门禁复验.md）：
-    //     media3 的 963,028 B   → 5 个消费者全部满足 ✅
-    //     VLC 的 554,808 B      → libmpv 缺 23 个、libplayer 缺 1 个、libavcodec 缺 3 个 ❌
-    //   （缺的是 std::to_chars/from_chars、bad_function_call vtable、iostream/filebuf vtable、
-    //     __libcpp_verbose_abort —— 都是 963,028 那份才有。）
-    //   选错 ⇒ libmpv.so 解析不了符号 ⇒ **MPV 直接全废**（不崩、静默不可用）。
-    //
-    // pickFirst 是全局打包配置，影响所有 flavor / ABI。但它只是"从两份里挑一份"，
-    // 被挑中的那份对全部 5 个消费者都够用 ⇒ 对 MPV 无影响。
+    // 585 删掉 libvlc-all 之后，classpath 上只剩 media3 一家提供它 ⇒ 这条 pickFirst 已无实际作用。
+    // **保留**的理由：① 一行配置、零副作用；② 若日后恢复 `nextlib-media3ext`（下面 dependencies
+    // 里已注释掉的那行）会再次出现同名冲突 —— 那时没有它就是构建失败。
     packaging {
         jniLibs {
             // 用 .add(...) 而不是 += ：pickFirsts 是 Gradle 的 SetProperty<String>，
@@ -247,13 +273,12 @@ dependencies {
     implementation libs.lifecycle.service
     // 从 webhtv 移植：fongmi media3 fork（third_party/maven）+ mpvplayer 扩展
     implementation libs.bundles.media3
-    // 2026-10-03 VLC 接入第 1 步（探针）：org.videolan.android:libvlc-all 是 fat AAR，
-    // 一次带 4 个 ABI 的 libvlc.so / libvlcjni.so / libc++_shared.so（v7a 合计 ≈39.3 MB）。
-    // ABI splits（buildSrc/AbiApkPackaging）只留 arm64-v8a / armeabi-v7a，x86/x86_64 会被裁掉。
-    // ⚠ 它自带的 libc++_shared.so 与 media3 的那份冲突 ⇒ 见上面 packaging 块。
-    // ⚠ 固定 3.6.3：门禁 1/2（libc++_shared.so 逐符号比对、Java 层 API 24 越界审计）
-    //    都是对着这个版本的 AAR 做的，换版本要重做。
-    implementation libs.libvlc.all
+    // 2026-10-07（585）：VLC 引擎整体移除，`org.videolan.android:libvlc-all` 依赖已删除。
+    //   实测体积收益（解包 .gradle-user/aar/libvlc-all-3.5.1.aar 的 jni payload）：
+    //     armeabi-v7a  未压缩 37.4 MB → 压缩后 ≈18.3 MB
+    //     arm64-v8a    未压缩 41.3 MB → 压缩后 ≈18.6 MB
+    //   ⇒ 每个 APK 预计少 ≈18 MB（585 之前的实测值：v7a 119.3 MB / arm64 134.9 MB）。
+    //   恢复方式 = `git revert` 585 的提交（依赖 / proguard keep / player/vlc 包一并还原）。
     // 2026-09-27 停用：nextlib-media3ext 是从 webhtv 一起带过来的，但 TV-fongmi 的源码
     // 对它零引用（全工程扫描：只有 build.gradle / libs.versions.toml / settings.gradle 提到名字，
     // app 与 catvod 的 .java 里一处都没有）。而它自带 jni/<abi>/{libavcodec,libavutil,
