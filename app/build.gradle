@@ -123,10 +123,16 @@ android {
         //    仍是 0/1，`PlayerEngine.Type` 仍是 EXO/MPV。已存的 `player_engine == 2`（选过 VLC 的
         //    用户）会被 clamp 成 `1` ⇒ **自动回到 MPV**，不崩、不需要清数据。这正是 2026-10-04
         //    接入时就把 VLC 值追加在末尾所预留的回滚路径。
-        //    ⭐ 体积收益（实测：解包 `.gradle-user/aar/libvlc-all-3.5.1.aar` 的 jni payload）：
-        //      armeabi-v7a  未压缩 37.4 MB → 压缩后 ≈18.3 MB
-        //      arm64-v8a    未压缩 41.3 MB → 压缩后 ≈18.6 MB
-        //    ⇒ 每个 APK 预计少 ≈18 MB（584 实测 v7a 119.3 MB / arm64 134.9 MB）。
+        //    ⭐ 体积收益（**585 发版后的实测值**，对比 584 的 release 资产字节数）：
+        //      leanback/mobile-arm64_v8a    134.85 MB → 91.78 MB   Δ −41.1 MB
+        //      leanback/mobile-armeabi_v7a  119.27 MB → 80.25 MB   Δ −37.2 MB
+        //    ⚠⚠ **估算方法踩过的坑**：一开始按 `.gradle-user/aar/libvlc-all-3.5.1.aar`
+        //      里 `.so` 的 **deflate 压缩后**大小估（v7a 18.3 / arm64 18.6 MB），
+        //      得出「少 ≈18 MB」——**低估了整整 2 倍**。原因：APK 里的 native 库是
+        //      **未压缩存储**的（`useLegacyPackaging=false`，为的是能直接从 APK mmap、
+        //      不解压到 data 分区）⇒ 省下的是**未压缩**体积。实测 Δ(37.2 / 41.1 MB)
+        //      与 AAR 内未压缩 payload（v7a 37.4 / arm64 41.3 MB）几乎逐字节相等。
+        //      ⇒ **以后估算 APK 体积影响，一律用 `.so` 的未压缩大小。**
         //    ⚠ `packaging.jniLibs.pickFirsts("**/libc++_shared.so")` **保留**（理由见该处注释）。
         //    ⚠ `gradle.properties` 的 `-Xmx4096m` **保留**（当初因 VLC 体积顶破 2 GB 才抬的，
         //      但 4 APK 打包本身吃内存，降回去没有收益、只有风险）。
@@ -274,10 +280,11 @@ dependencies {
     // 从 webhtv 移植：fongmi media3 fork（third_party/maven）+ mpvplayer 扩展
     implementation libs.bundles.media3
     // 2026-10-07（585）：VLC 引擎整体移除，`org.videolan.android:libvlc-all` 依赖已删除。
-    //   实测体积收益（解包 .gradle-user/aar/libvlc-all-3.5.1.aar 的 jni payload）：
-    //     armeabi-v7a  未压缩 37.4 MB → 压缩后 ≈18.3 MB
-    //     arm64-v8a    未压缩 41.3 MB → 压缩后 ≈18.6 MB
-    //   ⇒ 每个 APK 预计少 ≈18 MB（585 之前的实测值：v7a 119.3 MB / arm64 134.9 MB）。
+    //   实测体积收益（585 vs 584 的 release 资产字节数）：
+    //     leanback/mobile-arm64_v8a    134.85 MB → 91.78 MB   Δ −41.1 MB
+    //     leanback/mobile-armeabi_v7a  119.27 MB → 80.25 MB   Δ −37.2 MB
+    //   ⚠ 别按 AAR 里 `.so` 的 deflate 后大小估（那是 18 MB 量级，会低估 2 倍）——
+    //     APK 内 native 库未压缩存储（useLegacyPackaging=false）⇒ 用**未压缩**大小。
     //   恢复方式 = `git revert` 585 的提交（依赖 / proguard keep / player/vlc 包一并还原）。
     // 2026-09-27 停用：nextlib-media3ext 是从 webhtv 一起带过来的，但 TV-fongmi 的源码
     // 对它零引用（全工程扫描：只有 build.gradle / libs.versions.toml / settings.gradle 提到名字，
