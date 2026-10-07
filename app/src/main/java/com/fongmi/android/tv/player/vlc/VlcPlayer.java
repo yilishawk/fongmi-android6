@@ -40,6 +40,7 @@ import org.videolan.libvlc.interfaces.IVLCVout;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -954,7 +955,14 @@ public final class VlcPlayer extends SimpleBasePlayer {
                 // ⭐⭐ 最关键的一条取证：voutCount 是 VLC **真的建出视频输出窗口**的计数。
                 //    全程 voutCount==0 而 Playing 已到 ⇒ 「只有声音」成立，且不在我方 media3 适配层。
                 logD("event Vout: count=" + event.getVoutCount() + " attached=" + safeAttached());
-                if (event.getVoutCount() > 0) refreshVideoSize();
+                if (event.getVoutCount() > 0) {
+                    refreshVideoSize();
+                    // ⭐ vout 建立之后 libvlc 才把分辨率等元数据填进 IMedia.Track。
+                    //   event ES 往往早于 event Vout，所以这里必须再重建一次 Tracks，
+                    //   否则轨列表里会拿不到宽高（「定位不到视轨」）。
+                    //   refreshTracks() 只在内容真的变了才赋值，重复调用无副作用。
+                    refreshTracks();
+                }
             }
             case org.videolan.libvlc.MediaPlayer.Event.ESAdded,
                  org.videolan.libvlc.MediaPlayer.Event.ESDeleted,
@@ -1079,15 +1087,150 @@ public final class VlcPlayer extends SimpleBasePlayer {
         int[] support = new int[descriptions.length];
         for (int i = 0; i < descriptions.length; i++) {
             org.videolan.libvlc.MediaPlayer.TrackDescription description = descriptions[i];
-            formats[i] = new Format.Builder()
-                    .setId(String.valueOf(description.id))
-                    .setLabel(description.name)
-                    .setSampleMimeType(mimeOf(trackType))
-                    .build();
+            formats[i] = buildFormat(description, trackType);
             selected[i] = description.id == selectedId;
             support[i] = C.FORMAT_HANDLED;
         }
         out.add(new Tracks.Group(new TrackGroup(prefix + "-" + selectedId, formats), false, support, selected));
+    }
+
+    /**
+     * ⭐⭐⭐⭐⭐ 用 libvlc 的**轨道元数据**构造 media3 的 {@link Format} —— 「定位到视轨」的那一步。
+     *
+     * <h2>为什么必须这么写</h2>
+     * {@link org.videolan.libvlc.MediaPlayer.TrackDescription} 只有 {@code id} 与 {@code name}，
+     * <b>不含任何编码 / 分辨率信息</b>。而 media3-ui 的
+     * {@code DefaultTrackNameProvider.getTrackName()} 在**视频分支里完全不读 label**，
+     * 只用「角色 + 分辨率 + 帧率 + 码率」，末尾拼 {@code sampleMimeType} 的显示名
+     * （见 {@code .gradle-user/dtnp.txt} 反编译）。所以只填
+     * {@code id/label/sampleMimeType} 时，每一项都只能渲染成 {@code video/x-unknown}
+     * —— 轨列表里**看不出这是哪条视轨**，这就是「没有定位到视轨」。
+     *
+     * <p>元数据要从 {@link IMedia#getTrack(int)} 取：{@link IMedia.VideoTrack} 有
+     * {@code width/height/frameRateNum/frameRateDen/sarNum/sarDen}，
+     * {@link IMedia.AudioTrack} 有 {@code channels/rate}，基类有
+     * {@code codec/bitrate/language/description}。两边 id 空间一致
+     * （{@code refreshVideoSize()} 早已用 {@code video.id == vlc.getVideoTrack()} 匹配成功）。</p>
+     *
+     * <p>⚠ <b>取不到元数据时退回旧形状</b>，不报错也不乱填：
+     * <ul>
+     *   <li>{@code id == -1} 的伪轨（libvlc 的 "Disable"）在 {@code IMedia} 里**不存在**，
+     *       自然匹配不上；</li>
+     *   <li>流刚起时 libvlc 可能还没填好宽高（{@code event ES} 早于 {@code event Vout}）
+     *       ⇒ 本次保持旧形状，等 {@code event Vout} 再重建一次（见 {@code handleEvent}）。</li>
+     * </ul></p>
+     */
+    private Format buildFormat(org.videolan.libvlc.MediaPlayer.TrackDescription description, @C.TrackType int trackType) {
+        Format.Builder builder = new Format.Builder()
+                .setId(String.valueOf(description.id))
+                .setLabel(description.name)
+                .setSampleMimeType(mimeOf(trackType));
+        IMedia.Track meta = findMediaTrack(description.id, trackType);
+        if (meta == null) return builder.build();
+        if (!TextUtils.isEmpty(meta.description)) builder.setLabel(meta.description);
+        if (!TextUtils.isEmpty(meta.language)) builder.setLanguage(meta.language);
+        if (meta.bitrate > 0) builder.setAverageBitrate(meta.bitrate);
+        // ⚠ 只有「类型对得上」才用具体编码的 mime：media3 用 sampleMimeType 推
+        //   TrackGroup.getType()，填错会让视轨从「视轨」分类里消失。
+        String mime = mimeOfCodec(meta.codec, trackType);
+        if (mime != null) builder.setSampleMimeType(mime);
+        if (meta instanceof IMedia.VideoTrack video) {
+            if (video.width > 0) builder.setWidth(video.width);
+            if (video.height > 0) builder.setHeight(video.height);
+            if (video.frameRateNum > 0 && video.frameRateDen > 0) builder.setFrameRate((float) video.frameRateNum / (float) video.frameRateDen);
+            if (video.sarNum > 0 && video.sarDen > 0) builder.setPixelWidthHeightRatio((float) video.sarNum / (float) video.sarDen);
+        } else if (meta instanceof IMedia.AudioTrack audio) {
+            if (audio.channels > 0) builder.setChannelCount(audio.channels);
+            if (audio.rate > 0) builder.setSampleRate(audio.rate);
+        }
+        return builder.build();
+    }
+
+    /** 按 id + 实际类型在 {@link IMedia} 里找轨道；找不到返回 {@code null}（绝不抛）。 */
+    private IMedia.Track findMediaTrack(int id, @C.TrackType int trackType) {
+        if (id < 0) return null;
+        try {
+            IMedia media = vlc.getMedia();
+            if (media == null) return null;
+            for (int i = 0; i < media.getTrackCount(); i++) {
+                IMedia.Track track = media.getTrack(i);
+                if (track == null || track.id != id) continue;
+                if (matchesType(track, trackType)) return track;
+            }
+        } catch (Throwable e) {
+            Log.e(TAG, "findMediaTrack failed", e);
+        }
+        return null;
+    }
+
+    private static boolean matchesType(IMedia.Track track, @C.TrackType int trackType) {
+        return switch (trackType) {
+            case C.TRACK_TYPE_VIDEO -> track instanceof IMedia.VideoTrack;
+            case C.TRACK_TYPE_AUDIO -> track instanceof IMedia.AudioTrack;
+            case C.TRACK_TYPE_TEXT -> track instanceof IMedia.SubtitleTrack;
+            default -> false;
+        };
+    }
+
+    /** mime 的轨道类型是否与期望一致（防止把视轨算成音轨）。 */
+    private static boolean matchesType(@Nullable String mime, @C.TrackType int trackType) {
+        return mime != null && switch (trackType) {
+            case C.TRACK_TYPE_VIDEO -> MimeTypes.isVideo(mime);
+            case C.TRACK_TYPE_AUDIO -> MimeTypes.isAudio(mime);
+            case C.TRACK_TYPE_TEXT -> MimeTypes.isText(mime);
+            default -> false;
+        };
+    }
+
+    /**
+     * libvlc 的 codec 描述串 → media3 的 mime。
+     *
+     * <p>先问 media3 自带的 {@link MimeTypes#getMediaMimeType(String)}，再落到本类的小表
+     * （libvlc 给的是大写描述串，如 {@code "H264"} / {@code "HEVC"}）。
+     * 命中前**必须**校验推断出的轨道类型与期望一致，否则返回 {@code null}，由调用方保持原值。</p>
+     */
+    private static String mimeOfCodec(@Nullable String codec, @C.TrackType int trackType) {
+        if (TextUtils.isEmpty(codec)) return null;
+        String trimmed = codec.trim();
+        String key = trimmed.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+        String mime = MimeTypes.getMediaMimeType(trimmed);
+        if (!matchesType(mime, trackType)) mime = MimeTypes.getMediaMimeType(key);
+        if (!matchesType(mime, trackType)) mime = codecMime(key);
+        return matchesType(mime, trackType) ? mime : null;
+    }
+
+    /** 小表：覆盖本机常见的 libvlc 编码描述（键 = 小写、去分隔符后的 codec 串）。 */
+    private static String codecMime(String key) {
+        return switch (key) {
+            // 视频
+            case "h264", "avc", "avc1", "x264" -> "video/avc";
+            case "hevc", "h265", "hvc1", "x265" -> "video/hevc";
+            case "mpeg4", "mp4v", "mpeg4video", "xvid", "divx", "dx50" -> "video/mp4v-es";
+            case "mpeg1video", "mpeg2video", "mpegvideo", "mpgv", "mpeg12", "mpeg12video", "m2v" -> "video/mpeg2";
+            case "av1", "av01" -> "video/av01";
+            case "vp8", "vp80" -> "video/x-vnd.on2.vp8";
+            case "vp9", "vp09" -> "video/x-vnd.on2.vp9";
+            case "vc1", "wvc1", "vc1video" -> "video/wvc1";
+            case "h266", "vvc", "vvc1" -> "video/vvc";
+            case "mjpeg", "mjpg" -> "video/mjpeg";
+            case "wmv1", "wmv2", "wmv3", "wmv" -> "video/x-ms-wmv";
+            // 音频
+            case "aac", "mp4a", "mpeg4audio", "aaclatm" -> "audio/mp4a-latm";
+            case "ac3", "a52", "a52ac3", "ac3audio" -> "audio/ac3";
+            case "eac3", "ec3", "eac3atmos" -> "audio/eac3";
+            case "dts", "dca", "dtshd", "dtsma", "dtscore" -> "audio/vnd.dts";
+            case "mp3", "mpga", "mpegaudio", "mpeg1audio" -> "audio/mpeg";
+            case "mp2", "mpeg2audio", "mpegl2", "mpeg12audio" -> "audio/mpeg-L2";
+            case "flac" -> "audio/flac";
+            case "opus" -> "audio/opus";
+            case "vorbis" -> "audio/vorbis";
+            case "alac" -> "audio/alac";
+            case "truehd", "mlp" -> "audio/true-hd";
+            case "wma", "wmav1", "wmav2", "wmapro", "wmalossless" -> "audio/x-ms-wma";
+            case "amrnb", "amr" -> "audio/3gpp";
+            case "amrwb" -> "audio/amr-wb";
+            default -> null;
+        };
     }
 
     private static String mimeOf(@C.TrackType int trackType) {

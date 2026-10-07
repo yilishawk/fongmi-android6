@@ -81,7 +81,30 @@ android {
         //    **门禁①②/`--vout=`/解码/vout 全不动。**
         //    回退 = 删掉 `getState()` 里 `.setNewlyRenderedFirstFrame(consumeFirstFrame())` 一行。
         //    判读全文：`.gradle-user/2026-10-06-根因定案-media3黑幕未揭开.md`
-        versionCode 583
+        // → 584（2026-10-07，**真根因修复，非探针**）：让 VLC 适配层「定位到视轨」。
+        //    ⭐⭐⭐⭐⭐ 根因 = `VlcPlayer.addGroup()` 建 media3 `Format` 时只填了
+        //    `id / label / sampleMimeType`。`MediaPlayer.TrackDescription` **只有 id + name**
+        //    （该 API 给不出编码/分辨率），而 media3-ui 的
+        //    `DefaultTrackNameProvider.getTrackName()` 在**视频分支里完全不读 label**，
+        //    只用「分辨率 + 帧率 + 码率」+ 末尾 `sampleMimeType` 的显示名
+        //    ⇒ 每一项都渲染成 `video/x-unknown`，**看不出这是哪条视轨**。
+        //    ⭐ 元数据一直在 `IMedia.getTrack(i)` 里（`VideoTrack{width,height,sarNum,sarDen,
+        //    frameRateNum,frameRateDen}` / 基类 `{codec,bitrate,language,description}`），
+        //    且**两边 id 空间一致**（`refreshVideoSize()` 早已 `video.id == getVideoTrack()` 匹配成功）。
+        //    唯一变量 = `addGroup()` 改调新增的 `buildFormat()`，元数据取自 `IMedia.Track`；
+        //    另加 `Event.Vout` 里一次 `refreshTracks()`（`event ES` 早于 `event Vout`，宽高要等 vout 建好）。
+        //    ⭐ `MimeTypes.getMediaMimeType()` 只认 RFC 6381 串（`avc1.*`/`hev1.*`/`mp4a.xx`），
+        //    **不认 libvlc 的 `"H264"`** ⇒ 自带 26 条小表 + 类型护栏（防把视轨算成音轨）。
+        //    预期：视轨列表出现 `1080 × 608, 25 fps, H.264`（`video/avc` → 显示名 `H.264`）。
+        //    ⚠ 连带：`TrackUtil.describeFormat()` 输出变了（多宽高/编码），而 `TrackUtil.find()`
+        //    用它做**字符串匹配**存首选项 ⇒ 已存的音轨/字幕首选项会**失配一次**（回默认，不崩不清数据）。
+        //    ⚠ **故意未动**（另行拍板）：①`id == -1` 幽灵项仍在列表（删它会让「视频组无选中项」
+        //    成立 ⇒ `PlayerView.closeShutter()` 重盖黑幕）②`applyTrackSelection()` 无视频分支，
+        //    且用 `getFormat(0)` 恒取伪轨 `-1` ⇒ `isAudioTrack(-1)` 命中 ⇒ `setAudioTrack(-1)` 关音频。
+        //    **门禁①②/`--vout=`/解码/vout/首帧上报 全不动。**
+        //    回退 = 单文件 `git checkout -- app/src/main/java/com/fongmi/android/tv/player/vlc/VlcPlayer.java`
+        //    判读全文：`.gradle-user/2026-10-07-视轨定位修复-方案与实现.md`
+        versionCode 584
         versionName "5.6.3"
         externalNativeBuild {
             cmake {
